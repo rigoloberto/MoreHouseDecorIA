@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue';
 import { 
-  Upload, Sparkles, Image as ImageIcon, ChevronRight, RefreshCw, 
+  Upload, Sparkles, Image as ImageIcon, ChevronRight, ChevronLeft, RefreshCw, 
   Trash2, Download, Package, Grid, Settings, TrendingUp, Plus, 
-  Edit3, LogOut, CheckCircle, Info, DollarSign, Layout, ShieldAlert
+  Edit3, LogOut, CheckCircle, Info, DollarSign, Layout, ShieldAlert,
+  X, Maximize2, Eye
 } from 'lucide-vue-next';
 import confetti from 'canvas-confetti';
 
@@ -43,31 +44,133 @@ const uploadDragOver = ref(false);
 const uploadedImage = ref<string | null>(null);
 const fileInput = ref<HTMLInputElement | null>(null);
 
+// Historial de versiones del diseño en esta sesión
+const designHistory = ref<any[]>([]);
+const activeDesignId = ref<string>('');
+
+const activeDesign = computed(() => {
+  return designHistory.value.find(d => d.id === activeDesignId.value) || null;
+});
+
 const preferences = ref({
   spaceType: 'Sala',
   style: 'Minimalista',
   colors: 'Tonos neutros y cálidos (Beige, Gris suave, Madera)',
   lighting: 'Luz natural abundante con lámparas cálidas de acento',
-  elements: 'Sofá modular, Mesa de centro, Plantas decorativas'
+  customText: '',
+  priority: 'speed' // 'speed' o 'quality'
 });
+
+const selectedProductIds = ref<string[]>([]);
+
+// Limitar la selección manual de nuevos productos a máximo 3 por turno
+const toggleProductSelection = (id: string) => {
+  const idx = selectedProductIds.value.indexOf(id);
+  if (idx > -1) {
+    selectedProductIds.value.splice(idx, 1);
+  } else {
+    if (selectedProductIds.value.length >= 3) {
+      alert("⚠️ Límite alcanzado: Puedes seleccionar hasta 3 productos por turno para garantizar fotorrealismo real de catálogo. ¡Puedes ir amueblando por etapas!");
+      return;
+    }
+    selectedProductIds.value.push(id);
+  }
+};
+
+const isProductAlreadyPlaced = (productId: string) => {
+  if (!activeDesign.value) return false;
+  return activeDesign.value.products.some((p: any) => p.id === productId);
+};
 
 const isGenerating = ref(false);
 const generationStep = ref(0);
 const generationLogs = [
-  "Analizando volumetría del espacio con Gemini 1.5 Flash...",
-  "Evaluando iluminación actual y detectando inconsistencias...",
-  "Consultando catálogo oficial de More House S.A...",
-  "Generando propuesta de renderizado hiperrealista con Cloudflare Workers AI...",
-  "Compilando y optimizando el dossier de diseño..."
+  "Analizando volumetría del espacio y catálogo con Gemini 2.5 Flash...",
+  "Mapeando solicitudes semánticas y resolviendo elementos de catálogo...",
+  "Descargando imágenes de referencia física de los muebles seleccionados...",
+  "Renderizando habitación con fotorrealismo por referencias en Cloudflare Workers AI...",
+  "Ajustando perspectivas, sombreado tridimensional e iluminación final..."
 ];
 
-// Resultados de la generación
-const designResult = ref<{
-  current_issues: string;
-  prompt: string;
-  generated_image: string;
-  selected_products: any[];
-} | null>(null);
+// Orquestar generación con Backend
+const generateDesign = async () => {
+  const active = activeDesign.value;
+  if (!active) return;
+
+  isGenerating.value = true;
+  generationStep.value = 0;
+
+  // Efecto visual de pasos en el loading
+  const stepInterval = setInterval(() => {
+    if (generationStep.value < generationLogs.length - 1) {
+      generationStep.value++;
+    }
+  }, 2500);
+
+  try {
+    const res = await fetch(`${API_URL}/api/generate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        image: active.imageUrl,
+        preferences: preferences.value,
+        selectedProductIds: selectedProductIds.value,
+        qualityMode: preferences.value.priority
+      })
+    });
+
+    if (res.ok) {
+      const response = await res.json();
+      clearInterval(stepInterval);
+      
+      // Construir nuevo lote de productos combinando los anteriores con los nuevos de esta etapa
+      const prevProducts = active.products || [];
+      const mergedProducts = [...prevProducts];
+      for (const p of response.selected_products) {
+        if (!mergedProducts.some(m => m.id === p.id)) {
+          mergedProducts.push(p);
+        }
+      }
+
+      // Añadir la propuesta al historial
+      const newId = `design-${Date.now()}`;
+      designHistory.value.push({
+        id: newId,
+        imageUrl: response.generated_image,
+        products: mergedProducts,
+        label: `Diseño ${designHistory.value.length} (${response.selected_products.map((p: any) => p.name).join(', ') || 'IA Sugerido'})`,
+        currentIssues: response.current_issues,
+        prompt: response.prompt
+      });
+      
+      activeDesignId.value = newId;
+      selectedProductIds.value = []; // Limpiar selección para el próximo turno
+
+      // Animación de celebración
+      confetti({
+        particleCount: 150,
+        spread: 80,
+        origin: { y: 0.6 },
+        colors: ['#6366f1', '#a855f7', '#3b82f6']
+      });
+    } else {
+      const errText = await res.text();
+      alert(`Hubo un problema al generar la propuesta: ${errText}`);
+    }
+  } catch (err) {
+    console.error(err);
+    alert("Error de conexión con el backend.");
+  } finally {
+    clearInterval(stepInterval);
+    isGenerating.value = false;
+  }
+};
+
+const downloadDesign = () => {
+  if (!activeDesign.value) return;
+  const proxyUrl = `${API_URL}/api/proxy?url=${encodeURIComponent(activeDesign.value.imageUrl)}`;
+  downloadImage(proxyUrl, `rediseno-more-house-etapa-${designHistory.value.indexOf(activeDesign.value)}.png`);
+};
 
 // Manejo de carga de archivos
 const triggerFileInput = () => {
@@ -100,60 +203,22 @@ const processFile = (file: File) => {
   }
   const reader = new FileReader();
   reader.onload = (e) => {
-    uploadedImage.value = e.target?.result as string;
+    const base64Img = e.target?.result as string;
+    uploadedImage.value = base64Img;
+    designHistory.value = [
+      { id: 'original', imageUrl: base64Img, products: [], label: 'Habitación Original' }
+    ];
+    activeDesignId.value = 'original';
+    selectedProductIds.value = [];
   };
   reader.readAsDataURL(file);
 };
 
 const clearUploadedImage = () => {
   uploadedImage.value = null;
-  designResult.value = null;
-};
-
-// Orquestar generación con Backend
-const generateDesign = async () => {
-  if (!uploadedImage.value) return;
-
-  isGenerating.value = true;
-  generationStep.value = 0;
-
-  // Efecto visual de pasos en el loading
-  const stepInterval = setInterval(() => {
-    if (generationStep.value < generationLogs.length - 1) {
-      generationStep.value++;
-    }
-  }, 2500);
-
-  try {
-    const res = await fetch(`${API_URL}/api/generate`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        image: uploadedImage.value,
-        preferences: preferences.value
-      })
-    });
-
-    if (res.ok) {
-      designResult.value = await res.json();
-      clearInterval(stepInterval);
-      // Animación de celebración
-      confetti({
-        particleCount: 150,
-        spread: 80,
-        origin: { y: 0.6 },
-        colors: ['#6366f1', '#a855f7', '#3b82f6']
-      });
-    } else {
-      alert("Hubo un problema al generar la propuesta con el servidor de Elysia.");
-    }
-  } catch (err) {
-    console.error(err);
-    alert("Error de conexión con el backend.");
-  } finally {
-    clearInterval(stepInterval);
-    isGenerating.value = false;
-  }
+  designHistory.value = [];
+  activeDesignId.value = '';
+  selectedProductIds.value = [];
 };
 
 // Descargar imagen
@@ -286,14 +351,118 @@ const openAddModal = () => {
   showAddModal.value = true;
 };
 
-// Estadísticas simuladas
+// Estado para estadísticas reales obtenidas del servidor
+const realStats = ref({
+  totalGenerations: 0,
+  totalQuotes: 0,
+  styleStats: {} as Record<string, number>,
+  totalProducts: 0
+});
+
+const fetchStats = async () => {
+  try {
+    const res = await fetch(`${API_URL}/api/stats`);
+    if (res.ok) {
+      realStats.value = await res.json();
+    }
+  } catch (err) {
+    console.error("Error fetching stats:", err);
+  }
+};
+
+const quoteProduct = async (product: any) => {
+  try {
+    const res = await fetch(`${API_URL}/api/stats/quote`, { method: 'POST' });
+    if (res.ok) {
+      const data = await res.json();
+      realStats.value.totalQuotes = data.totalQuotes;
+      alert(`✨ ¡Cotización Solicitada! Hemos enviado tu solicitud para: "${product.name}". (Métrica real registrada en el servidor)`);
+    }
+  } catch (err) {
+    console.error(err);
+  }
+};
+
+const quoteAllProducts = async () => {
+  if (!activeDesign.value || activeDesign.value.products.length === 0) return;
+  try {
+    const res = await fetch(`${API_URL}/api/stats/quote`, { method: 'POST' });
+    if (res.ok) {
+      const data = await res.json();
+      realStats.value.totalQuotes = data.totalQuotes;
+      alert(`✨ ¡Cotización Completa Solicitada! Hemos registrado tu interés por los ${activeDesign.value.products.length} productos colocados en tu diseño por un valor total de $${activeDesign.value.products.reduce((acc: number, p: any) => acc + (p.details?.price || 0), 0)} USD.`);
+    }
+  } catch (err) {
+    console.error(err);
+  }
+};
+
+// Cargar estadísticas reales al iniciar
+onMounted(() => {
+  fetchStats();
+});
+
+// Estadísticas dinámicas vinculadas a la API
 const stats = computed(() => {
   return [
-    { name: "Procesamientos Totales IA", value: "348", icon: Sparkles, color: "text-indigo-400" },
-    { name: "Conversión de Venta", value: "+24.8%", icon: TrendingUp, color: "text-emerald-400" },
+    { name: "Procesamientos Reales IA", value: realStats.value.totalGenerations.toString(), icon: Sparkles, color: "text-indigo-400" },
+    { name: "Cotizaciones / Leads", value: realStats.value.totalQuotes.toString(), icon: TrendingUp, color: "text-emerald-400" },
     { name: "Productos en Catálogo", value: products.value.length.toString(), icon: Package, color: "text-amber-400" }
   ];
 });
+
+// ==========================================
+// ESTADO: GALERÍA DE ITERACIONES LIGHTBOX
+// ==========================================
+const isGalleryOpen = ref(false);
+const galleryActiveDesignId = ref<string>('');
+
+const galleryActiveIndex = computed(() => {
+  return designHistory.value.findIndex(d => d.id === galleryActiveDesignId.value);
+});
+
+const galleryActiveDesign = computed(() => {
+  return designHistory.value[galleryActiveIndex.value] || null;
+});
+
+const openGallery = (designId: string) => {
+  galleryActiveDesignId.value = designId || activeDesignId.value || 'original';
+  isGalleryOpen.value = true;
+};
+
+const closeGallery = () => {
+  isGalleryOpen.value = false;
+};
+
+const selectGalleryDesign = (id: string) => {
+  galleryActiveDesignId.value = id;
+  activeDesignId.value = id; // Sincroniza el visor principal en tiempo real!
+};
+
+const galleryPrev = () => {
+  const prevIdx = galleryActiveIndex.value - 1;
+  if (prevIdx >= 0) {
+    const id = designHistory.value[prevIdx].id;
+    galleryActiveDesignId.value = id;
+    activeDesignId.value = id;
+  }
+};
+
+const galleryNext = () => {
+  const nextIdx = galleryActiveIndex.value + 1;
+  if (nextIdx < designHistory.value.length) {
+    const id = designHistory.value[nextIdx].id;
+    galleryActiveDesignId.value = id;
+    activeDesignId.value = id;
+  }
+};
+
+const downloadGalleryDesign = () => {
+  const design = galleryActiveDesign.value;
+  if (!design) return;
+  const proxyUrl = `${API_URL}/api/proxy?url=${encodeURIComponent(design.imageUrl)}`;
+  downloadImage(proxyUrl, `rediseno-more-house-etapa-${designHistory.value.indexOf(design)}.png`);
+};
 
 </script>
 
@@ -306,7 +475,7 @@ const stats = computed(() => {
     <!-- NAVBAR PREMIUM GLASSMORPHISM -->
     <nav class="glass-nav sticky top-0 z-50 px-6 py-4 flex items-center justify-between">
       <div class="flex items-center gap-3">
-        <div class="bg-indigo-500/20 border border-brand-500/30 p-2 rounded-xl text-brand-500 flex items-center justify-center">
+        <div class="bg-indigo-500/20 border border-indigo-500/30 p-2 rounded-xl text-indigo-400 flex items-center justify-center">
           <Sparkles class="w-6 h-6 animate-pulse-subtle" />
         </div>
         <div>
@@ -319,7 +488,7 @@ const stats = computed(() => {
       <div class="flex gap-1 bg-slate-900/60 border border-white/5 p-1 rounded-xl">
         <button 
           @click="activeTab = 'designer'"
-          :class="activeTab === 'designer' ? 'bg-brand-500 text-white shadow-md' : 'text-slate-400 hover:text-slate-200'"
+          :class="activeTab === 'designer' ? 'bg-indigo-500 text-white shadow-md' : 'text-slate-400 hover:text-slate-200'"
           class="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-300"
         >
           <Layout class="w-4 h-4" />
@@ -327,15 +496,15 @@ const stats = computed(() => {
         </button>
         <button 
           @click="activeTab = 'catalog'"
-          :class="activeTab === 'catalog' ? 'bg-brand-500 text-white shadow-md' : 'text-slate-400 hover:text-slate-200'"
+          :class="activeTab === 'catalog' ? 'bg-indigo-500 text-white shadow-md' : 'text-slate-400 hover:text-slate-200'"
           class="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-300"
         >
           <Grid class="w-4 h-4" />
           Catálogo
         </button>
         <button 
-          @click="activeTab = 'admin'"
-          :class="activeTab === 'admin' ? 'bg-brand-500 text-white shadow-md' : 'text-slate-400 hover:text-slate-200'"
+          @click="activeTab = 'admin'; fetchStats();"
+          :class="activeTab === 'admin' ? 'bg-indigo-500 text-white shadow-md' : 'text-slate-400 hover:text-slate-200'"
           class="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-300"
         >
           <Settings class="w-4 h-4" />
@@ -355,86 +524,56 @@ const stats = computed(() => {
           <h1 class="text-4xl md:text-5xl font-extrabold tracking-tight mb-3 bg-gradient-to-r from-white via-slate-100 to-indigo-200 bg-clip-text text-transparent">
             Rediseña tus Espacios con IA
           </h1>
-          <p class="text-slate-400 text-base md:text-lg">
-            Sube una fotografía real de tu habitación, especifica tus preferencias estéticas y recibe una propuesta visual realista integrada con nuestro catálogo de lujo.
+          <p class="text-slate-400 text-sm md:text-base">
+            Sube una fotografía de tu habitación, especifica tus preferencias estéticas y decora con fotorrealismo por turnos agregando productos de catálogo.
           </p>
         </div>
 
-        <div v-if="!designResult" class="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
-          
-          <!-- ZONA DE CARGA DE IMAGEN (LADO IZQUIERDO) -->
-          <div class="lg:col-span-7 h-full flex flex-col">
-            <div 
-              @dragover.prevent="uploadDragOver = true"
-              @dragleave.prevent="uploadDragOver = false"
-              @drop.prevent="handleDrop"
-              :class="[
-                uploadDragOver ? 'border-brand-500 bg-brand-500/10 shadow-lg shadow-brand-500/5' : 'border-white/10 hover:border-brand-500/50 hover:bg-white/5',
-                uploadedImage ? 'p-4' : 'p-12 py-20'
-              ]"
-              class="glass-card flex-grow flex flex-col items-center justify-center border-2 border-dashed rounded-3xl cursor-pointer transition-all duration-300 text-center"
-              @click="!uploadedImage && triggerFileInput()"
-            >
-              <input 
-                type="file" 
-                ref="fileInput" 
-                class="hidden" 
-                accept="image/*" 
-                @change="handleFileChange"
-              />
-
-              <!-- Estado: Vacío -->
-              <div v-if="!uploadedImage" class="flex flex-col items-center gap-4">
-                <div class="w-16 h-16 rounded-2xl bg-indigo-500/10 border border-brand-500/20 text-brand-500 flex items-center justify-center shadow-inner">
-                  <Upload class="w-8 h-8 animate-pulse-subtle" />
-                </div>
-                <div>
-                  <h3 class="text-lg font-semibold text-slate-100">Arrastra tu fotografía aquí</h3>
-                  <p class="text-slate-400 text-sm mt-1">O haz clic para explorar en tu dispositivo</p>
-                  <p class="text-slate-500 text-xs mt-3">Formatos soportados: JPG, PNG, WEBP (Máx 10MB)</p>
-                </div>
-              </div>
-
-              <!-- Estado: Imagen cargada -->
-              <div v-else class="w-full h-full relative group">
-                <img 
-                  :src="uploadedImage" 
-                  alt="Espacio cargado" 
-                  class="w-full max-h-[450px] object-cover rounded-2xl border border-white/5 shadow-2xl"
-                />
-                <!-- Hover overlay -->
-                <div class="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity duration-300 rounded-2xl flex items-center justify-center gap-4">
-                  <button 
-                    @click.stop="triggerFileInput()"
-                    class="bg-indigo-500 hover:bg-indigo-600 p-3 rounded-xl text-white transition-transform duration-200 hover:scale-110 shadow-lg"
-                    title="Cambiar imagen"
-                  >
-                    <RefreshCw class="w-5 h-5" />
-                  </button>
-                  <button 
-                    @click.stop="clearUploadedImage()"
-                    class="bg-red-500/20 hover:bg-red-500 border border-red-500/30 p-3 rounded-xl text-red-200 hover:text-white transition-transform duration-200 hover:scale-110 shadow-lg"
-                    title="Eliminar imagen"
-                  >
-                    <Trash2 class="w-5 h-5" />
-                  </button>
-                </div>
-              </div>
+        <!-- ZONA DE SUBIDA (Si no hay imagen) -->
+        <div v-if="!uploadedImage" class="max-w-2xl w-full mx-auto">
+          <div 
+            @dragover.prevent="uploadDragOver = true"
+            @dragleave.prevent="uploadDragOver = false"
+            @drop.prevent="handleDrop"
+            :class="[
+              uploadDragOver ? 'border-indigo-500 bg-indigo-500/10 shadow-lg shadow-indigo-500/5' : 'border-white/10 hover:border-indigo-500/50 hover:bg-white/5'
+            ]"
+            class="glass-card p-12 py-24 flex flex-col items-center justify-center border-2 border-dashed rounded-3xl cursor-pointer transition-all duration-300 text-center"
+            @click="triggerFileInput"
+          >
+            <input 
+              type="file" 
+              ref="fileInput" 
+              class="hidden" 
+              accept="image/*" 
+              @change="handleFileChange"
+            />
+            <div class="w-16 h-16 rounded-2xl bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 flex items-center justify-center shadow-inner mb-4">
+              <Upload class="w-8 h-8 animate-pulse-subtle" />
+            </div>
+            <div>
+              <h3 class="text-lg font-semibold text-slate-100">Arrastra tu fotografía aquí</h3>
+              <p class="text-slate-400 text-sm mt-1">O haz clic para explorar en tu dispositivo</p>
+              <p class="text-slate-500 text-xs mt-3">Formatos soportados: JPG, PNG, WEBP, AVIF (Máx 10MB)</p>
             </div>
           </div>
+        </div>
 
-          <!-- FORMULARIO DE PREFERENCIAS (LADO DERECHO) -->
-          <div class="lg:col-span-5 flex flex-col gap-6">
-            <div class="glass-card p-6 md:p-8 rounded-3xl flex flex-col gap-6">
-              <h2 class="text-xl font-bold tracking-tight border-b border-white/5 pb-4 text-slate-100 flex items-center gap-2">
+        <!-- WORKSPACE DEL DISEÑADOR (Si ya hay imagen cargada) -->
+        <div v-else class="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+          
+          <!-- COLUMNA 1: CONTROLES DE ESPECIFICACIONES (LADO IZQUIERDO, 4/12) -->
+          <div class="lg:col-span-4 flex flex-col gap-6">
+            <div class="glass-card p-6 rounded-3xl flex flex-col gap-5">
+              <h2 class="text-lg font-bold tracking-tight border-b border-white/5 pb-3 text-slate-100 flex items-center gap-2">
                 <Settings class="w-5 h-5 text-indigo-400" />
-                Especificaciones del Diseño
+                Especificaciones
               </h2>
 
               <!-- Tipo de espacio -->
-              <div class="flex flex-col gap-2">
-                <label class="text-sm font-semibold text-slate-400">¿Qué tipo de espacio es?</label>
-                <select v-model="preferences.spaceType" class="glass-input w-full">
+              <div class="flex flex-col gap-1.5">
+                <label class="text-xs font-semibold text-slate-400">Tipo de espacio</label>
+                <select v-model="preferences.spaceType" class="glass-input py-2 text-sm w-full">
                   <option>Sala</option>
                   <option>Comedor</option>
                   <option>Oficina / Estudio</option>
@@ -444,9 +583,9 @@ const stats = computed(() => {
               </div>
 
               <!-- Estilo estético -->
-              <div class="flex flex-col gap-2">
-                <label class="text-sm font-semibold text-slate-400">Estilo estético deseado</label>
-                <select v-model="preferences.style" class="glass-input w-full">
+              <div class="flex flex-col gap-1.5">
+                <label class="text-xs font-semibold text-slate-400">Estilo estético</label>
+                <select v-model="preferences.style" class="glass-input py-2 text-sm w-full">
                   <option>Minimalista</option>
                   <option>Moderno</option>
                   <option>Elegante</option>
@@ -456,160 +595,318 @@ const stats = computed(() => {
               </div>
 
               <!-- Colores -->
-              <div class="flex flex-col gap-2">
-                <label class="text-sm font-semibold text-slate-400">Paleta cromática sugerida</label>
-                <input v-model="preferences.colors" type="text" class="glass-input w-full" placeholder="Ej. Gris suave, blanco y toques dorados" />
+              <div class="flex flex-col gap-1.5">
+                <label class="text-xs font-semibold text-slate-400">Paleta de colores</label>
+                <input v-model="preferences.colors" type="text" class="glass-input py-2.5 text-sm w-full" placeholder="Gris suave, madera y beige" />
               </div>
 
               <!-- Iluminación -->
-              <div class="flex flex-col gap-2">
-                <label class="text-sm font-semibold text-slate-400">Iluminación preferida</label>
-                <input v-model="preferences.lighting" type="text" class="glass-input w-full" placeholder="Ej. Luz natural difusa y lámparas LED" />
+              <div class="flex flex-col gap-1.5">
+                <label class="text-xs font-semibold text-slate-400">Iluminación</label>
+                <input v-model="preferences.lighting" type="text" class="glass-input py-2.5 text-sm w-full" placeholder="Luz natural y lámparas cálidas" />
               </div>
 
-              <!-- Elementos a incluir -->
-              <div class="flex flex-col gap-2">
-                <label class="text-sm font-semibold text-slate-400">Elementos clave</label>
-                <input v-model="preferences.elements" type="text" class="glass-input w-full" placeholder="Ej. Sofá modular, cuadros grandes" />
+              <!-- Instrucciones adicionales (Texto Libre) -->
+              <div class="flex flex-col gap-1.5">
+                <label class="text-xs font-semibold text-slate-400">¿Qué deseas agregar? (Texto libre)</label>
+                <textarea 
+                  v-model="preferences.customText" 
+                  class="glass-input py-2 h-16 text-xs w-full resize-none" 
+                  placeholder="Ej: pon cortinas blancas de tela, papel tapiz de textura de madera de roble, presupuesto de $2000"
+                ></textarea>
+              </div>
+
+              <!-- Checklist de Catálogo a colocar -->
+              <div class="flex flex-col gap-1.5">
+                <div class="flex items-center justify-between">
+                  <label class="text-xs font-semibold text-slate-400">Muebles de Catálogo a colocar</label>
+                  <span class="text-[10px] text-indigo-300 font-medium bg-indigo-500/10 px-2 py-0.5 rounded-full">
+                    Turno: {{ selectedProductIds.length }}/3
+                  </span>
+                </div>
+                <div class="p-2.5 rounded-2xl bg-slate-950/60 border border-white/5 max-h-48 overflow-y-auto flex flex-col gap-2 scrollbar-thin">
+                  <div 
+                    v-for="prod in products" 
+                    :key="prod.id"
+                    @click="!isProductAlreadyPlaced(prod.id) && toggleProductSelection(prod.id)"
+                    :class="[
+                      isProductAlreadyPlaced(prod.id) ? 'opacity-50 cursor-default' : 'hover:bg-white/10 cursor-pointer',
+                      selectedProductIds.includes(prod.id) ? 'border-indigo-500 bg-indigo-500/10' : 'border-white/5 bg-white/5'
+                    ]"
+                    class="flex items-center justify-between p-2.5 rounded-xl border transition-colors select-none"
+                  >
+                    <div class="flex items-center gap-3 min-w-0">
+                      <img :src="prod.image" class="w-9 h-9 object-cover rounded-lg border border-white/10" />
+                      <div class="min-w-0">
+                        <p class="text-xs font-bold text-slate-200 truncate">{{ prod.name }}</p>
+                        <p class="text-[10px] text-slate-400">${{ prod.price }} | {{ prod.style }}</p>
+                      </div>
+                    </div>
+                    <div class="flex items-center gap-2">
+                      <span v-if="isProductAlreadyPlaced(prod.id)" class="text-[9px] font-bold text-indigo-400 bg-indigo-500/15 border border-indigo-500/30 px-1.5 py-0.5 rounded-md">
+                        Colocado
+                      </span>
+                      <input 
+                        v-else
+                        type="checkbox" 
+                        :value="prod.id" 
+                        :checked="selectedProductIds.includes(prod.id)"
+                        :disabled="!selectedProductIds.includes(prod.id) && selectedProductIds.length >= 3"
+                        @change="toggleProductSelection(prod.id)"
+                        @click.stop
+                        class="rounded accent-indigo-500 bg-slate-950 border-white/10 cursor-pointer w-4 h-4 disabled:opacity-30 disabled:cursor-not-allowed"
+                      />
+                    </div>
+                  </div>
+                  <div v-if="products.length === 0" class="text-center py-6 text-xs text-slate-500 flex flex-col items-center gap-2">
+                    <span>No se cargó el catálogo.</span>
+                    <button 
+                      @click="fetchCatalog" 
+                      class="px-2.5 py-1 rounded-lg bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 text-[10px] font-bold flex items-center gap-1 hover:bg-indigo-500/40 transition-colors"
+                    >
+                      <RefreshCw class="w-3 h-3" /> Reintentar
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Prioridad Calidad / Velocidad -->
+              <div class="flex flex-col gap-1.5">
+                <label class="text-xs font-semibold text-slate-400">Prioridad del Renderizado</label>
+                <div class="grid grid-cols-2 gap-2 bg-slate-950/60 p-1.5 rounded-xl border border-white/5">
+                  <button 
+                    type="button"
+                    @click="preferences.priority = 'speed'"
+                    :class="preferences.priority === 'speed' ? 'bg-indigo-500/20 text-indigo-400 border-indigo-500/30 shadow' : 'text-slate-400 border-transparent hover:text-slate-200'"
+                    class="py-2 px-2.5 rounded-lg text-xs font-bold border flex items-center justify-center gap-1 transition-all duration-200"
+                  >
+                    <span>⚡ Rapidez (Klein)</span>
+                  </button>
+                  <button 
+                    type="button"
+                    @click="preferences.priority = 'quality'"
+                    :class="preferences.priority === 'quality' ? 'bg-indigo-500/20 text-indigo-400 border-indigo-500/30 shadow' : 'text-slate-400 border-transparent hover:text-slate-200'"
+                    class="py-2 px-2.5 rounded-lg text-xs font-bold border flex items-center justify-center gap-1 transition-all duration-200"
+                  >
+                    <span>🎨 Calidad (Dev)</span>
+                  </button>
+                </div>
               </div>
 
               <!-- BOTÓN DE GENERACIÓN -->
               <button 
                 @click="generateDesign"
-                :disabled="!uploadedImage || isGenerating"
-                class="glass-btn-primary w-full flex items-center justify-center gap-3 mt-2"
+                :disabled="isGenerating"
+                class="glass-btn-primary w-full flex items-center justify-center gap-2 mt-2 py-2.5 text-sm"
               >
-                <Sparkles class="w-5 h-5" />
-                <span>{{ isGenerating ? 'Procesando con IA...' : 'Generar Rediseño con IA' }}</span>
-                <ChevronRight class="w-5 h-5" />
+                <Sparkles class="w-4 h-4" />
+                <span>{{ isGenerating ? 'Procesando Turno...' : 'Generar Turno de Diseño' }}</span>
               </button>
             </div>
           </div>
-        </div>
 
-        <!-- GENERANDO LOADING SCREEN OVERLAY -->
-        <div v-if="isGenerating" class="glass-card p-12 py-20 rounded-3xl flex flex-col items-center justify-center gap-6 max-w-xl w-full mx-auto text-center border border-indigo-500/20 shadow-2xl shadow-indigo-500/10">
-          <div class="relative w-24 h-24 flex items-center justify-center">
-            <!-- Spinner -->
-            <div class="absolute inset-0 rounded-full border-4 border-slate-900 border-t-indigo-500 animate-spin"></div>
-            <Sparkles class="w-8 h-8 text-indigo-400 animate-pulse-subtle" />
-          </div>
-          <div>
-            <h3 class="text-xl font-bold text-slate-100">Diseñando espacio...</h3>
-            <p class="text-slate-400 text-sm mt-2 transition-all duration-300 max-w-md mx-auto h-12">
-              {{ generationLogs[generationStep] }}
-            </p>
-          </div>
-        </div>
-
-        <!-- PANTALLA DE RESULTADOS GENERADOS -->
-        <div v-if="designResult" class="flex flex-col gap-8">
-          
-          <!-- COMPARACIÓN ANTES / DESPUÉS -->
-          <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
-            
-            <!-- ANTES -->
-            <div class="flex flex-col gap-2">
-              <span class="text-xs font-semibold uppercase tracking-wider text-slate-500 px-1">Fotografía Original (Antes)</span>
-              <div class="glass-card p-3 rounded-3xl shadow-xl">
-                <img :src="uploadedImage" alt="Original" class="w-full h-[400px] object-cover rounded-2xl" />
-              </div>
-            </div>
-
-            <!-- DESPUÉS -->
-            <div class="flex flex-col gap-2">
-              <span class="text-xs font-semibold uppercase tracking-wider text-indigo-400 px-1 flex items-center gap-1.5">
-                <Sparkles class="w-3.5 h-3.5" />
-                Propuesta de Rediseño IA (Después)
-              </span>
-              <div class="glass-card p-3 rounded-3xl shadow-xl relative group">
-                <img :src="designResult.generated_image" alt="Generado por IA" class="w-full h-[400px] object-cover rounded-2xl" />
-                <div class="absolute bottom-6 right-6 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
-                  <button 
-                    @click="downloadImage(designResult.generated_image, 'rediseño-more-house-ia.png')"
-                    class="bg-indigo-500 hover:bg-indigo-600 p-3 rounded-xl text-white shadow-xl flex items-center gap-2 font-semibold text-sm transition-transform duration-200 hover:scale-105"
-                  >
-                    <Download class="w-4 h-4" />
-                    Descargar Render
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <!-- DOSSIER DE ANÁLISIS DE GEMINI -->
-          <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
-            
-            <!-- ANÁLISIS DE DISEÑO (IZQUIERDA) -->
-            <div class="lg:col-span-1 glass-card p-6 md:p-8 rounded-3xl flex flex-col gap-4">
-              <h3 class="text-lg font-bold text-slate-100 flex items-center gap-2 border-b border-white/5 pb-3">
-                <Info class="w-5 h-5 text-indigo-400" />
-                Evaluación del Espacio
-              </h3>
-              <p class="text-slate-300 text-sm leading-relaxed">
-                {{ designResult.current_issues }}
-              </p>
-              
-              <div class="bg-indigo-500/10 border border-brand-500/20 p-4 rounded-2xl flex flex-col gap-2 mt-2">
-                <span class="text-xs font-bold uppercase tracking-wider text-indigo-400">Prompt IA Generativo</span>
-                <p class="text-xs text-slate-400 italic">
-                  "{{ designResult.prompt }}"
-                </p>
+          <!-- COLUMNA 2: VISOR PRINCIPAL Y HISTORIAL TIMELINE (CENTRO, 5/12) -->
+          <div class="lg:col-span-5 flex flex-col gap-6">
+            <div class="glass-card p-4 rounded-3xl flex flex-col gap-4">
+              <div class="flex items-center justify-between border-b border-white/5 pb-3">
+                <span class="text-xs font-semibold uppercase tracking-wider text-indigo-400 flex items-center gap-1.5">
+                  <Sparkles class="w-3.5 h-3.5 animate-pulse-subtle" />
+                  Visor de Diseño
+                </span>
+                <span class="text-[10px] bg-indigo-500/10 text-indigo-300 border border-indigo-500/20 px-2.5 py-0.5 rounded-full font-bold">
+                  {{ activeDesign?.label }}
+                </span>
               </div>
 
-              <button 
-                @click="clearUploadedImage()"
-                class="glass-btn-secondary w-full text-center py-2.5 mt-2"
-              >
-                Diseñar Nueva Habitación
-              </button>
-            </div>
-
-            <!-- PRODUCTOS SELECCIONADOS DEL CATÁLOGO (DERECHA) -->
-            <div class="lg:col-span-2 glass-card p-6 md:p-8 rounded-3xl flex flex-col gap-6">
-              <h3 class="text-lg font-bold text-slate-100 flex items-center gap-2 border-b border-white/5 pb-3">
-                <Package class="w-5 h-5 text-indigo-400" />
-                Mobiliario Sugerido de More House S.A.
-              </h3>
-              
-              <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <!-- Contenedor del Visor -->
+              <div class="relative w-full aspect-[4/3] rounded-2xl border border-white/5 bg-slate-950 overflow-hidden flex items-center justify-center">
+                <!-- Render clickeable -->
                 <div 
-                  v-for="item in designResult.selected_products" 
-                  :key="item.id" 
-                  class="bg-brand-card/40 border border-white/5 p-5 rounded-2xl flex flex-col justify-between"
+                  v-if="activeDesign?.imageUrl"
+                  @click="openGallery(activeDesignId)"
+                  class="w-full h-full relative cursor-zoom-in group/visor select-none"
                 >
-                  <div class="flex flex-col gap-3">
-                    <div class="flex items-center justify-between gap-2">
-                      <h4 class="font-bold text-slate-100 text-base leading-tight">{{ item.name }}</h4>
-                      <span class="text-xs font-bold px-2.5 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-brand-500/20">
-                        ${{ item.details?.price || 'Consultar' }}
-                      </span>
-                    </div>
-                    
-                    <p class="text-xs text-slate-400 leading-relaxed italic">
-                      "{{ item.justification }}"
-                    </p>
-                    
-                    <div class="text-[11px] text-slate-500 mt-1 flex flex-col gap-1 border-t border-white/5 pt-2">
-                      <span v-if="item.details?.dimensions">📏 Medidas: {{ item.details.dimensions }}</span>
-                      <span v-if="item.details?.category">🏷️ Categoría: {{ item.details.category }} | Estilo: {{ item.details.style }}</span>
+                  <img 
+                    :src="activeDesign.imageUrl" 
+                    alt="Visor de Staging" 
+                    class="w-full h-full object-cover transition-transform duration-500 group-hover/visor:scale-[1.01]"
+                  />
+                  <!-- Hover overlay con icono de ampliar y galería -->
+                  <div class="absolute inset-0 bg-slate-950/20 opacity-0 group-hover/visor:opacity-100 transition-opacity duration-300 flex items-center justify-center">
+                    <div class="bg-slate-950/85 backdrop-blur-md border border-white/10 px-4 py-2.5 rounded-2xl text-indigo-300 shadow-xl flex items-center gap-2 transform scale-90 group-hover/visor:scale-100 transition-all duration-300">
+                      <Maximize2 class="w-4 h-4" />
+                      <span class="text-xs font-bold">Ver Galería / Ampliar</span>
                     </div>
                   </div>
+                </div>
 
-                  <button class="bg-indigo-500 hover:bg-brand-600 text-white text-xs font-bold py-2 px-4 rounded-xl transition-all duration-200 mt-4 flex items-center justify-center gap-1.5 shadow shadow-brand-500/10">
-                    <Plus class="w-3.5 h-3.5" />
-                    Cotizar Mueble
+                <!-- Imagen Original clickeable -->
+                <div 
+                  v-else-if="uploadedImage"
+                  @click="openGallery('original')"
+                  class="w-full h-full relative cursor-zoom-in group/visor select-none"
+                >
+                  <img 
+                    :src="uploadedImage" 
+                    alt="Habitación Original" 
+                    class="w-full h-full object-cover transition-transform duration-500 group-hover/visor:scale-[1.01]"
+                  />
+                  <div class="absolute inset-0 bg-slate-950/20 opacity-0 group-hover/visor:opacity-100 transition-opacity duration-300 flex items-center justify-center">
+                    <div class="bg-slate-950/85 backdrop-blur-md border border-white/10 px-4 py-2.5 rounded-2xl text-indigo-300 shadow-xl flex items-center gap-2 transform scale-90 group-hover/visor:scale-100 transition-all duration-300">
+                      <Maximize2 class="w-4 h-4" />
+                      <span class="text-xs font-bold">Ver Galería / Ampliar</span>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Botón de Acceso Rápido a la Galería en la esquina superior izquierda si hay historial -->
+                <button 
+                  v-if="designHistory.length > 0 && !isGenerating"
+                  @click.stop="openGallery(activeDesignId)"
+                  class="absolute top-3 left-3 bg-slate-950/70 hover:bg-slate-950 backdrop-blur-md border border-white/10 px-3 py-2 rounded-xl text-indigo-400 hover:text-indigo-300 transition-all duration-200 hover:scale-105 z-30 flex items-center gap-1.5 font-semibold text-xs shadow-md"
+                  title="Abrir Galería de Propuestas"
+                >
+                  <Eye class="w-4 h-4" />
+                  <span>Galería ({{ designHistory.length }})</span>
+                </button>
+
+                <!-- Loading overlay -->
+                <div v-if="isGenerating" class="absolute inset-0 bg-slate-950/80 backdrop-blur-sm flex flex-col items-center justify-center gap-4 z-40">
+                  <div class="relative w-16 h-16 flex items-center justify-center">
+                    <div class="absolute inset-0 rounded-full border-4 border-slate-900 border-t-indigo-500 animate-spin"></div>
+                    <Sparkles class="w-6 h-6 text-indigo-400 animate-pulse-subtle" />
+                  </div>
+                  <div class="text-center px-4">
+                    <p class="text-sm font-bold text-slate-100">Renderizando con IA...</p>
+                    <p class="text-[11px] text-slate-400 mt-1 max-w-xs mx-auto italic h-8">
+                      {{ generationLogs[generationStep] }}
+                    </p>
+                  </div>
+                </div>
+
+                <!-- Botones Flotantes -->
+                <div v-if="!isGenerating && activeDesignId !== 'original'" class="absolute bottom-3 right-3 flex gap-2 z-30">
+                  <button 
+                    @click.stop="downloadDesign"
+                    class="bg-indigo-500 hover:bg-brand-600 px-4 py-2.5 rounded-xl text-white shadow-lg flex items-center gap-1.5 font-bold text-xs border border-white/10 transition-transform duration-200 hover:scale-105"
+                  >
+                    <Download class="w-3.5 h-3.5" />
+                    Descargar Render
+                  </button>
+                  <button 
+                    @click.stop="clearUploadedImage"
+                    class="bg-red-500/20 hover:bg-red-500 border border-red-500/30 p-2.5 rounded-xl text-red-200 hover:text-white transition-transform duration-200 hover:scale-105 shadow-lg"
+                    title="Empezar diseño desde cero"
+                  >
+                    <Trash2 class="w-4 h-4" />
                   </button>
                 </div>
               </div>
-            </div>
 
+              <!-- TIMELINE DE HISTORIAL (MINIATURAS HORIZONTALES) -->
+              <div class="flex flex-col gap-2 mt-1">
+                <span class="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Línea de Tiempo del Diseño (Historial)</span>
+                <div class="flex gap-3 overflow-x-auto pb-2 scrollbar-thin">
+                  <div 
+                    v-for="(design, index) in designHistory" 
+                    :key="design.id"
+                    @click="activeDesignId = design.id"
+                    :class="[
+                      activeDesignId === design.id ? 'border-indigo-500 ring-2 ring-indigo-500/30 scale-[1.02]' : 'border-white/10 opacity-70 hover:opacity-100 hover:scale-[1.01]'
+                    ]"
+                    class="flex-shrink-0 w-24 border rounded-xl overflow-hidden cursor-pointer bg-slate-950 transition-all duration-200"
+                  >
+                    <div class="h-16 w-full relative">
+                      <img :src="design.imageUrl" class="w-full h-full object-cover" />
+                      <span class="absolute bottom-1 right-1 bg-black/60 px-1 rounded text-[8px] font-bold text-slate-300">
+                        {{ index === 0 ? 'Vacío' : `Etapa ${index}` }}
+                      </span>
+                    </div>
+                    <div class="p-1 text-center border-t border-white/5 bg-slate-950">
+                      <p class="text-[9px] font-bold text-slate-300 truncate px-0.5">{{ design.label }}</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
 
+          <!-- COLUMNA 3: EVALUACIÓN Y COTIZACIÓN ACUMULADA (LADO DERECHO, 3/12) -->
+          <div class="lg:col-span-3 flex flex-col gap-6">
+            <!-- Evaluación del Espacio -->
+            <div class="glass-card p-6 rounded-3xl flex flex-col gap-3">
+              <h3 class="text-sm font-bold text-slate-100 flex items-center gap-2 border-b border-white/5 pb-2">
+                <Info class="w-4 h-4 text-indigo-400" />
+                Evaluación del Espacio
+              </h3>
+              <p class="text-xs text-slate-300 leading-relaxed max-h-40 overflow-y-auto scrollbar-thin">
+                {{ activeDesign?.currentIssues || 'Sube una habitación y genera tu primer diseño para ver la evaluación automática de la IA.' }}
+              </p>
+              
+              <div v-if="activeDesign?.prompt" class="bg-indigo-500/5 border border-indigo-500/10 p-3 rounded-xl flex flex-col gap-1 mt-1">
+                <span class="text-[9px] font-bold uppercase tracking-wider text-indigo-400">Prompt de Imagen Generado</span>
+                <p class="text-[10px] text-slate-400 italic line-clamp-3 hover:line-clamp-none transition-all duration-300 cursor-pointer">
+                  "{{ activeDesign.prompt }}"
+                </p>
+              </div>
+            </div>
+
+            <!-- Carrito de Cotización Acumulado -->
+            <div class="glass-card p-6 rounded-3xl flex flex-col gap-4 flex-grow justify-between">
+              <div class="flex flex-col gap-3">
+                <h3 class="text-sm font-bold text-slate-100 flex items-center gap-2 border-b border-white/5 pb-2">
+                  <Package class="w-4 h-4 text-indigo-400" />
+                  Mobiliario en este Diseño
+                </h3>
+                
+                <div class="flex flex-col gap-2 max-h-60 overflow-y-auto scrollbar-thin">
+                  <div 
+                    v-for="item in activeDesign?.products || []" 
+                    :key="item.id"
+                    class="flex items-center justify-between p-2 rounded-xl bg-white/5 border border-white/5"
+                  >
+                    <div class="flex items-center gap-2 min-w-0">
+                      <img :src="item.details?.image" class="w-7 h-7 object-cover rounded border border-white/10" />
+                      <div class="min-w-0">
+                        <p class="text-[10px] font-bold text-slate-200 truncate">{{ item.name }}</p>
+                        <p class="text-[8px] text-slate-500 truncate italic">"{{ item.justification.substring(0, 45) }}..."</p>
+                      </div>
+                    </div>
+                    <div class="text-right flex-shrink-0 flex flex-col items-end gap-0.5">
+                      <span class="text-[10px] font-bold text-slate-300">${{ item.details?.price || 0 }}</span>
+                      <button @click="quoteProduct(item.details)" class="text-[8px] font-semibold text-indigo-400 hover:text-indigo-300 hover:underline">
+                        Cotizar
+                      </button>
+                    </div>
+                  </div>
+                  <div v-if="!activeDesign || activeDesign.products.length === 0" class="text-center py-8 text-xs text-slate-500 italic">
+                    Sin muebles agregados todavía.
+                  </div>
+                </div>
+              </div>
+
+              <!-- Costo Acumulado y Cotización Total -->
+              <div v-if="activeDesign && activeDesign.products.length > 0" class="border-t border-white/5 pt-3 mt-3 flex flex-col gap-3">
+                <div class="flex items-center justify-between text-xs">
+                  <span class="font-semibold text-slate-400">Total Cotización:</span>
+                  <span class="text-base font-extrabold text-indigo-300">
+                    ${{ activeDesign.products.reduce((acc: number, p: any) => acc + (p.details?.price || 0), 0) }}
+                  </span>
+                </div>
+                <button 
+                  @click="quoteAllProducts" 
+                  class="w-full bg-indigo-500 hover:bg-indigo-600 text-white text-xs font-bold py-2.5 rounded-xl transition-all duration-200 flex items-center justify-center gap-1.5 shadow"
+                >
+                  <DollarSign class="w-3.5 h-3.5" />
+                  Solicitar Cotización Completa
+                </button>
+              </div>
+            </div>
+          </div>
+          
         </div>
-
       </section>
-
+      
       <!-- 2. TAB: CATALOGO -->
       <section v-if="activeTab === 'catalog'" class="flex-grow flex flex-col gap-8 animate-slide-up">
         
@@ -651,6 +948,15 @@ const stats = computed(() => {
           <RefreshCw class="w-8 h-8 text-indigo-500 animate-spin" />
           <span class="text-slate-400 text-sm">Cargando catálogo oficial...</span>
         </div>
+        <div v-else-if="products.length === 0" class="text-center py-20 flex flex-col items-center gap-3">
+          <span class="text-slate-400 text-sm">No se pudo conectar al servidor para obtener el catálogo.</span>
+          <button 
+            @click="fetchCatalog" 
+            class="px-4 py-2 rounded-xl bg-indigo-500 hover:bg-indigo-600 text-white text-xs font-bold flex items-center gap-1.5 transition-all shadow shadow-indigo-500/20"
+          >
+            <RefreshCw class="w-4 h-4" /> Intentar Cargar Catálogo
+          </button>
+        </div>
 
         <!-- GRILLA DE PRODUCTOS -->
         <div v-else class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
@@ -665,7 +971,7 @@ const stats = computed(() => {
                 :alt="prod.name" 
                 class="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
               />
-              <span class="absolute top-4 right-4 bg-brand-dark/80 backdrop-blur-md border border-white/10 text-brand-500 text-xs font-bold px-3 py-1 rounded-full">
+              <span class="absolute top-4 right-4 bg-[#090d16]/80 backdrop-blur-md border border-white/10 text-indigo-400 text-xs font-bold px-3 py-1 rounded-full">
                 {{ prod.category }}
               </span>
             </div>
@@ -695,7 +1001,7 @@ const stats = computed(() => {
         <!-- ESTADO: NO LOGUEADO -->
         <div v-if="!isAdminLoggedIn" class="max-w-md w-full mx-auto my-12 glass-card p-6 md:p-8 rounded-3xl flex flex-col gap-6">
           <div class="text-center flex flex-col items-center gap-2">
-            <div class="w-12 h-12 bg-indigo-500/15 border border-brand-500/20 text-brand-500 rounded-xl flex items-center justify-center shadow-inner">
+            <div class="w-12 h-12 bg-indigo-500/15 border border-indigo-500/20 text-indigo-400 rounded-xl flex items-center justify-center shadow-inner">
               <Settings class="w-6 h-6" />
             </div>
             <h2 class="text-2xl font-bold text-slate-100 tracking-tight">Acceso Administrativo</h2>
@@ -751,6 +1057,38 @@ const stats = computed(() => {
               </div>
               <div :class="stat.color" class="p-3 bg-white/5 border border-white/5 rounded-2xl">
                 <component :is="stat.icon" class="w-6 h-6" />
+              </div>
+            </div>
+          </div>
+
+          <!-- GRÁFICA DE ESTILOS MÁS SOLICITADOS -->
+          <div class="glass-card p-6 md:p-8 rounded-3xl flex flex-col gap-4">
+            <h3 class="text-lg font-bold text-slate-100 flex items-center gap-2 border-b border-white/5 pb-3">
+              <TrendingUp class="w-5 h-5 text-indigo-400" />
+              Estilos más Solicitados (Preferencia de Clientes)
+            </h3>
+            
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 mt-2">
+              <div 
+                v-for="(count, style) in realStats.styleStats" 
+                :key="style" 
+                class="bg-brand-card/30 border border-white/5 p-4 rounded-2xl flex flex-col gap-2"
+              >
+                <div class="flex items-center justify-between">
+                  <span class="text-sm font-bold text-slate-200">{{ style }}</span>
+                  <span class="text-xs font-semibold px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-300 border border-brand-500/10">
+                    {{ count }}
+                  </span>
+                </div>
+                <div class="w-full bg-slate-950/60 rounded-full h-2 overflow-hidden border border-white/5">
+                  <div 
+                    class="bg-indigo-500 h-full rounded-full transition-all duration-500" 
+                    :style="{ width: `${realStats.totalGenerations > 0 ? (count / realStats.totalGenerations) * 100 : 0}%` }"
+                  ></div>
+                </div>
+                <span class="text-[10px] text-slate-500">
+                  {{ realStats.totalGenerations > 0 ? Math.round((count / realStats.totalGenerations) * 100) : 0 }}% de peticiones
+                </span>
               </div>
             </div>
           </div>
@@ -818,7 +1156,7 @@ const stats = computed(() => {
     </main>
 
     <!-- FOOTER PREMIUM -->
-    <footer class="mt-auto border-t border-white/5 bg-brand-dark/90 px-6 py-6 text-center text-xs text-slate-500 flex flex-col md:flex-row items-center justify-between gap-4">
+    <footer class="mt-auto border-t border-white/5 bg-[#0b0f19] px-6 py-6 text-center text-xs text-slate-500 flex flex-col md:flex-row items-center justify-between gap-4">
       <div>
         <span>&copy; 2026 More House S.A. Todos los derechos reservados.</span>
       </div>
@@ -897,6 +1235,177 @@ const stats = computed(() => {
             <button type="submit" class="glass-btn-primary py-2.5 text-sm">Guardar Cambios</button>
           </div>
         </form>
+      </div>
+    </div>
+
+    <!-- MODAL GALERÍA DE ITERACIONES LIGHTBOX (FULL-SCREEN PREMIUM) -->
+    <div 
+      v-if="isGalleryOpen" 
+      class="fixed inset-0 z-50 flex flex-col justify-between bg-slate-950/95 backdrop-blur-md p-6 animate-fade-in"
+      @click.self="closeGallery"
+    >
+      <!-- Cabecera de la Galería -->
+      <div class="flex items-center justify-between border-b border-white/5 pb-4">
+        <div class="flex items-center gap-3">
+          <div class="bg-indigo-500/20 border border-indigo-500/30 p-2 rounded-xl text-indigo-400">
+            <Sparkles class="w-5 h-5" />
+          </div>
+          <div>
+            <h3 class="text-lg font-bold text-slate-100 flex items-center gap-2">
+              Galería de Iteraciones
+              <span class="text-xs bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 px-2.5 py-0.5 rounded-full font-bold">
+                Etapa {{ galleryActiveIndex }} de {{ designHistory.length - 1 }}
+              </span>
+            </h3>
+            <p class="text-slate-400 text-xs mt-0.5">{{ galleryActiveDesign?.label }}</p>
+          </div>
+        </div>
+
+        <button 
+          @click="closeGallery" 
+          class="p-2.5 rounded-xl bg-white/5 border border-white/10 text-slate-400 hover:text-slate-200 hover:bg-white/10 transition-all"
+        >
+          <X class="w-5 h-5" />
+        </button>
+      </div>
+
+      <!-- Área de Contenido Principal (Grilla Central: Navegación + Detalle) -->
+      <div class="flex-grow grid grid-cols-1 lg:grid-cols-12 gap-8 items-center py-6 min-h-0">
+        
+        <!-- COLUMNA RENDER CENTRAL (8/12 en LG) -->
+        <div class="lg:col-span-8 flex items-center justify-between gap-4 h-full min-h-0">
+          
+          <!-- Botón Anterior -->
+          <button 
+            @click="galleryPrev" 
+            :disabled="galleryActiveIndex <= 0"
+            class="p-4 rounded-full bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white disabled:opacity-20 disabled:cursor-not-allowed border border-white/10 transition-all shadow-lg flex-shrink-0"
+          >
+            <ChevronLeft class="w-6 h-6" />
+          </button>
+
+          <!-- Imagen Grande del Visor -->
+          <div class="flex-grow h-full max-h-[65vh] rounded-3xl border border-white/10 bg-slate-900 overflow-hidden flex items-center justify-center relative shadow-2xl group">
+            <img 
+              v-if="galleryActiveDesign?.imageUrl"
+              :src="galleryActiveDesign.imageUrl" 
+              class="w-full h-full object-contain"
+            />
+            
+            <!-- Botón de Descarga Rápido Flotante -->
+            <button 
+              v-if="galleryActiveDesignId !== 'original'"
+              @click.stop="downloadGalleryDesign"
+              class="absolute bottom-4 right-4 bg-indigo-500 hover:bg-indigo-600 px-4 py-2.5 rounded-xl text-white shadow-lg flex items-center gap-1.5 font-bold text-xs border border-white/10 transition-all hover:scale-105"
+            >
+              <Download class="w-3.5 h-3.5" />
+              Descargar este Render
+            </button>
+          </div>
+
+          <!-- Botón Siguiente -->
+          <button 
+            @click="galleryNext" 
+            :disabled="galleryActiveIndex >= designHistory.length - 1"
+            class="p-4 rounded-full bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white disabled:opacity-20 disabled:cursor-not-allowed border border-white/10 transition-all shadow-lg flex-shrink-0"
+          >
+            <ChevronRight class="w-6 h-6" />
+          </button>
+        </div>
+
+        <!-- COLUMNA DETALLES Y PRESUPUESTO (4/12 en LG) -->
+        <div class="lg:col-span-4 flex flex-col gap-5 h-full min-h-0 overflow-y-auto pr-2 scrollbar-thin">
+          
+          <!-- Información y Evaluación de la Habitación en esta etapa -->
+          <div class="glass-card p-5 rounded-2xl border border-white/5 flex flex-col gap-3">
+            <h4 class="text-xs font-bold uppercase tracking-wider text-indigo-400 flex items-center gap-1.5">
+              <Info class="w-4 h-4" />
+              Detalles de la Iteración
+            </h4>
+            <div class="flex flex-col gap-2">
+              <div class="flex items-center justify-between text-xs border-b border-white/5 pb-2">
+                <span class="text-slate-400">Etapa:</span>
+                <span class="text-slate-200 font-bold">{{ galleryActiveIndex === 0 ? 'Habitación Original' : `Propuesta ${galleryActiveIndex}` }}</span>
+              </div>
+              <p class="text-xs text-slate-300 leading-relaxed italic">
+                {{ galleryActiveDesign?.currentIssues || 'Fotografía base cargada por el usuario.' }}
+              </p>
+            </div>
+            
+            <!-- Prompt de IA Utilizado -->
+            <div v-if="galleryActiveDesign?.prompt" class="bg-indigo-500/5 border border-indigo-500/10 p-3 rounded-xl flex flex-col gap-1 mt-1">
+              <span class="text-[9px] font-bold uppercase tracking-wider text-indigo-400">Prompt Generado para FLUX.2</span>
+              <p class="text-[10px] text-slate-400 italic">
+                "{{ galleryActiveDesign.prompt }}"
+              </p>
+            </div>
+          </div>
+
+          <!-- Mobiliario en esta etapa -->
+          <div class="glass-card p-5 rounded-2xl border border-white/5 flex flex-col gap-3 flex-grow min-h-0">
+            <h4 class="text-xs font-bold uppercase tracking-wider text-indigo-400 flex items-center gap-1.5">
+              <Package class="w-4 h-4" />
+              Muebles Colocados hasta este turno
+            </h4>
+            
+            <div class="flex flex-col gap-2 overflow-y-auto scrollbar-thin max-h-52">
+              <div 
+                v-for="item in galleryActiveDesign?.products || []" 
+                :key="item.id"
+                class="flex items-center justify-between p-2 rounded-xl bg-white/5 border border-white/5"
+              >
+                <div class="flex items-center gap-2 min-w-0">
+                  <img :src="item.details?.image" class="w-8 h-8 object-cover rounded border border-white/10" />
+                  <div class="min-w-0">
+                    <p class="text-[10px] font-bold text-slate-200 truncate">{{ item.name }}</p>
+                    <p class="text-[8px] text-slate-500 truncate italic">"{{ item.justification }}"</p>
+                  </div>
+                </div>
+                <div class="text-right flex-shrink-0">
+                  <span class="text-[10px] font-bold text-slate-300">${{ item.details?.price || 0 }}</span>
+                </div>
+              </div>
+              <div v-if="!galleryActiveDesign || galleryActiveDesign.products.length === 0" class="text-center py-8 text-xs text-slate-500 italic">
+                Sin muebles agregados todavía.
+              </div>
+            </div>
+
+            <!-- Costo acumulado en la etapa de la galería -->
+            <div v-if="galleryActiveDesign && galleryActiveDesign.products.length > 0" class="border-t border-white/5 pt-3 mt-auto flex items-center justify-between text-xs">
+              <span class="font-semibold text-slate-400">Presupuesto Acumulado:</span>
+              <span class="text-sm font-extrabold text-indigo-300">
+                ${{ galleryActiveDesign.products.reduce((acc: number, p: any) => acc + (p.details?.price || 0), 0) }} USD
+              </span>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Barra Inferior de la Galería (Miniaturas Timeline para Navegación Directa) -->
+      <div class="border-t border-white/5 pt-4">
+        <span class="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-2 text-center">Hacer clic en cualquier miniatura para saltar a esa iteración</span>
+        <div class="flex justify-center gap-3 overflow-x-auto pb-2 scrollbar-thin">
+          <div 
+            v-for="(design, index) in designHistory" 
+            :key="design.id"
+            @click="selectGalleryDesign(design.id)"
+            :class="[
+              galleryActiveDesignId === design.id ? 'border-indigo-500 ring-2 ring-indigo-500/30 scale-[1.02]' : 'border-white/10 opacity-60 hover:opacity-100 hover:scale-[1.01]'
+            ]"
+            class="flex-shrink-0 w-24 border rounded-xl overflow-hidden cursor-pointer bg-slate-950 transition-all duration-200"
+          >
+            <div class="h-14 w-full relative">
+              <img :src="design.imageUrl" class="w-full h-full object-cover" />
+              <span class="absolute bottom-1 right-1 bg-black/60 px-1 rounded text-[8px] font-bold text-slate-300">
+                {{ index === 0 ? 'Vacío' : `Etapa ${index}` }}
+              </span>
+            </div>
+            <div class="p-1 text-center border-t border-white/5 bg-slate-950">
+              <p class="text-[9px] font-bold text-slate-300 truncate px-0.5">{{ design.label }}</p>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
 
