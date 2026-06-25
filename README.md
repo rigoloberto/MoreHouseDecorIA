@@ -4,6 +4,86 @@
 
 ---
 
+## 📐 Arquitectura del Sistema
+
+El siguiente diagrama detalla el flujo de datos y la arquitectura técnica del sistema, conectando el Frontend SPA (Vue 3 + Vite) con el Backend API (Bun + Elysia) y las integraciones de IA (Gemini, Cloudflare Workers AI y Hugging Face):
+
+```mermaid
+flowchart TD
+
+subgraph group_frontend["Frontend SPA"]
+  node_spa["Vue app<br/>vite spa<br/>[main.ts]"]
+  node_app_shell["App shell<br/>vue shell<br/>[App.vue]"]
+  node_timeline(("Timeline<br/>iteration nav"))
+  node_viewer(("Lightbox<br/>image viewer"))
+  node_cart[("Quote cart<br/>derived cart")]
+  node_admin_ui["Admin panel<br/>admin ui"]
+  node_styles["Styling<br/>tailwind css<br/>[index.css]"]
+end
+
+subgraph group_backend["Backend API"]
+  node_backend_api["API server<br/>bun server<br/>[index.ts]"]
+  node_diagnostics["Diagnostics<br/>dev server<br/>[dev.ts]"]
+  node_staging_flow(("Staging flow<br/>request orchestration"))
+  node_metadata["Iteration data<br/>history model"]
+  node_catalog[("Catalog data<br/>product store")]
+  node_gemini_adapter{{"Gemini rewrite<br/>prompt adapter"}}
+  node_cloudflare_ai["FLUX.2<br/>image generation"]
+  node_hf_fallback["HF fallback<br/>image fallback"]
+  node_env["Env config<br/>runtime config"]
+end
+
+node_spa -->|"boots"| node_app_shell
+node_app_shell -->|"navigates"| node_timeline
+node_app_shell -->|"opens"| node_viewer
+node_app_shell -->|"summarizes"| node_cart
+node_app_shell -->|"routes"| node_admin_ui
+node_spa -->|"styles"| node_styles
+node_backend_api -->|"orchestrates"| node_staging_flow
+node_staging_flow -->|"generates"| node_cloudflare_ai
+node_staging_flow -->|"rewrites"| node_gemini_adapter
+node_staging_flow -->|"falls back"| node_hf_fallback
+node_staging_flow -->|"returns"| node_metadata
+node_staging_flow -->|"uses"| node_catalog
+node_backend_api -.->|"separates"| node_diagnostics
+node_backend_api -->|"reads"| node_env
+node_catalog -->|"edited by"| node_admin_ui
+node_metadata -->|"drives"| node_timeline
+node_metadata -->|"describes"| node_viewer
+node_metadata -->|"feeds"| node_cart
+
+classDef toneNeutral fill:#f8fafc,stroke:#334155,stroke-width:1.5px,color:#0f172a
+classDef toneBlue fill:#dbeafe,stroke:#2563eb,stroke-width:1.5px,color:#172554
+classDef toneAmber fill:#fef3c7,stroke:#d97706,stroke-width:1.5px,color:#78350f
+classDef toneMint fill:#dcfce7,stroke:#16a34a,stroke-width:1.5px,color:#14532d
+classDef toneRose fill:#ffe4e6,stroke:#e11d48,stroke-width:1.5px,color:#881337
+classDef toneIndigo fill:#e0e7ff,stroke:#4f46e5,stroke-width:1.5px,color:#312e81
+classDef toneTeal fill:#ccfbf1,stroke:#0f766e,stroke-width:1.5px,color:#134e4a
+class node_spa,node_app_shell,node_timeline,node_viewer,node_cart,node_admin_ui,node_styles toneBlue
+class node_backend_api,node_diagnostics,node_staging_flow,node_metadata,node_catalog,node_gemini_adapter,node_cloudflare_ai,node_hf_fallback,node_env toneAmber
+```
+
+### 🔍 Desglose de Componentes e Interacciones
+
+#### 1. Backend API (Servidor en Bun)
+*   **API Server (`index.ts`)**: Servidor principal que expone los endpoints de cotización, catálogo, métricas y proxy de imágenes en el puerto 3000. Carga las variables de entorno de forma nativa.
+*   **Diagnostics Server (`dev.ts`)**: Microservicio desacoplado en el puerto 3001. Evalúa el estado de conexión de las API de Google AI Studio, Cloudflare, Hugging Face y Replicate, comprobando cuotas y reportando bloqueos.
+*   **Staging Flow (Orquestador de Peticiones)**: Hilo lógico de generación de diseño. Cuando se solicita un rediseño:
+    1. Llama a **Gemini** pasándole la imagen de fondo y el inventario del catálogo. Gemini actúa como *curador* de productos y *redactor* de prompts adaptados a FLUX.2, vinculando los muebles seleccionados a las etiquetas físicas `input_image_1..3`.
+    2. Descarga en caliente las fotos en alta resolución desde el servidor de imágenes de catálogo y las adjunta en el payload `multipart/form-data`.
+    3. Invoca la API de **Cloudflare Workers AI** con el modelo FLUX.2. Si ocurre un fallo de cuota (429), realiza un fallback en caliente a **Hugging Face** con el modelo `FLUX.1-schnell`.
+    4. Retorna el resultado consolidado (render final, problemas resueltos y desglose de muebles inyectados) al Frontend.
+
+#### 2. Frontend SPA (Aplicación Single Page)
+*   **Vite SPA (`main.ts` & `index.css`)**: Punto de arranque y cargador de estilos unificados de Tailwind CSS.
+*   **App Shell (`App.vue`)**: Núcleo reactivo del cliente. Orquesta la captura de preferencias, la limitación de turnos, y la comunicación con el Backend.
+*   **Timeline / Iteration Nav**: Barra horizontal que permite navegar por el historial del diseño. Cada etapa actualiza la imagen base en tiempo real y recalcula el inventario actual.
+*   **Lightbox / Image Viewer**: Visor modal de ampliación a pantalla completa que permite navegar por las distintas propuestas mediante transiciones y consultar el desglose de productos y presupuesto acumulado de forma aislada.
+*   **Quote Cart (Carrito Acumulado)**: Sumador dinámico que lee el historial acumulado en la iteración actual para consolidar el total presupuestado y enviar el lead de cotización.
+*   **Admin Panel (CRUD Catálogo)**: Interfaz de mantenimiento protegida por credenciales administrativas que permite insertar, modificar y borrar productos del catálogo en tiempo real.
+
+---
+
 ## 🌟 Características Clave
 
 1. **Virtual Staging por Turnos (Multi-Reference Staging)**:
