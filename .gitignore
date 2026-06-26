@@ -17,6 +17,8 @@ dist/
 build/
 backend/dist/
 frontend/dist/
+.wrangler/
+backend/.wrangler/
 
 # Logs locales y temporales
 *.log
