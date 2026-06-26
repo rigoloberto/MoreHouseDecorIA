@@ -33,6 +33,11 @@ subgraph group_backend["Backend API"]
   node_env["Env config<br/>runtime config"]
 end
 
+subgraph group_storage["Almacenamiento Cloudflare"]
+  node_d1[("D1 Database<br/>SQLite DB [DB]")]
+  node_r2[("R2 Bucket<br/>Object Storage [BUCKET]")]
+end
+
 node_spa -->|"boots"| node_app_shell
 node_app_shell -->|"navigates"| node_timeline
 node_app_shell -->|"opens"| node_viewer
@@ -52,6 +57,16 @@ node_metadata -->|"drives"| node_timeline
 node_metadata -->|"describes"| node_viewer
 node_metadata -->|"feeds"| node_cart
 
+node_catalog -->|"persiste"| node_d1
+node_backend_api -->|"guarda/sirve"| node_r2
+node_app_shell -->|"sube binarios"| node_r2
+
+click node_spa "https://github.com/rigoloberto/morehousedecoria/blob/main/frontend/src/main.ts"
+click node_app_shell "https://github.com/rigoloberto/morehousedecoria/blob/main/frontend/src/App.vue"
+click node_styles "https://github.com/rigoloberto/morehousedecoria/blob/main/frontend/src/assets/index.css"
+click node_backend_api "https://github.com/rigoloberto/morehousedecoria/blob/main/backend/src/index.ts"
+click node_diagnostics "https://github.com/rigoloberto/morehousedecoria/blob/main/backend/src/dev.ts"
+
 classDef toneNeutral fill:#f8fafc,stroke:#334155,stroke-width:1.5px,color:#0f172a
 classDef toneBlue fill:#dbeafe,stroke:#2563eb,stroke-width:1.5px,color:#172554
 classDef toneAmber fill:#fef3c7,stroke:#d97706,stroke-width:1.5px,color:#78350f
@@ -59,8 +74,10 @@ classDef toneMint fill:#dcfce7,stroke:#16a34a,stroke-width:1.5px,color:#14532d
 classDef toneRose fill:#ffe4e6,stroke:#e11d48,stroke-width:1.5px,color:#881337
 classDef toneIndigo fill:#e0e7ff,stroke:#4f46e5,stroke-width:1.5px,color:#312e81
 classDef toneTeal fill:#ccfbf1,stroke:#0f766e,stroke-width:1.5px,color:#134e4a
+classDef toneViolet fill:#f3e8ff,stroke:#7c3aed,stroke-width:1.5px,color:#3b0764
 class node_spa,node_app_shell,node_timeline,node_viewer,node_cart,node_admin_ui,node_styles toneBlue
 class node_backend_api,node_diagnostics,node_staging_flow,node_metadata,node_catalog,node_gemini_adapter,node_cloudflare_ai,node_hf_fallback,node_env toneAmber
+class node_d1,node_r2 toneViolet
 ```
 
 ### 🔍 Desglose de Componentes e Interacciones
