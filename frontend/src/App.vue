@@ -11,7 +11,7 @@ import confetti from 'canvas-confetti';
 // ==========================================
 // ESTADO GLOBAL Y CONFIGURACIÓN
 // ==========================================
-const API_URL = 'http://localhost:3000';
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000';
 const activeTab = ref<'designer' | 'catalog' | 'admin'>('designer');
 
 // Catálogo de productos cargado desde la API
@@ -192,7 +192,9 @@ const handleDrop = (e: DragEvent) => {
   }
 };
 
-const processFile = (file: File) => {
+const isUploadingImage = ref(false);
+
+const processFile = async (file: File) => {
   if (!file.type.startsWith('image/')) {
     alert('Por favor carga únicamente archivos de imagen.');
     return;
@@ -201,17 +203,39 @@ const processFile = (file: File) => {
     alert('La imagen supera el límite de 10MB.');
     return;
   }
-  const reader = new FileReader();
-  reader.onload = (e) => {
-    const base64Img = e.target?.result as string;
-    uploadedImage.value = base64Img;
-    designHistory.value = [
-      { id: 'original', imageUrl: base64Img, products: [], label: 'Habitación Original' }
-    ];
-    activeDesignId.value = 'original';
-    selectedProductIds.value = [];
-  };
-  reader.readAsDataURL(file);
+
+  isUploadingImage.value = true;
+  try {
+    const formData = new FormData();
+    formData.append('file', file);
+
+    console.log("Subiendo imagen de habitación a R2...");
+    const res = await fetch(`${API_URL}/api/upload`, {
+      method: 'POST',
+      body: formData
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      const fullUrl = data.url.startsWith('http') ? data.url : `${API_URL}${data.url}`;
+      
+      uploadedImage.value = fullUrl;
+      designHistory.value = [
+        { id: 'original', imageUrl: fullUrl, products: [], label: 'Habitación Original' }
+      ];
+      activeDesignId.value = 'original';
+      selectedProductIds.value = [];
+      console.log("Subida exitosa de habitación a R2:", fullUrl);
+    } else {
+      const errMsg = await res.text();
+      alert(`Error al subir la imagen al almacenamiento R2: ${errMsg}`);
+    }
+  } catch (err: any) {
+    console.error("Error al subir a R2:", err);
+    alert('Error de conexión al subir la imagen al almacenamiento R2.');
+  } finally {
+    isUploadingImage.value = false;
+  }
 };
 
 const clearUploadedImage = () => {
@@ -235,6 +259,45 @@ const downloadImage = (imgUrl: string, filename: string) => {
 // ESTADO: CATALOGO
 // ==========================================
 const selectedCategory = ref<string>('Todos');
+const adminFileInput = ref<HTMLInputElement | null>(null);
+
+const triggerAdminFileInput = () => {
+  adminFileInput.value?.click();
+};
+
+const handleAdminFileChange = async (e: Event) => {
+  const files = (e.target as HTMLInputElement).files;
+  if (files && files[0]) {
+    const file = files[0];
+    if (file.size > 5 * 1024 * 1024) {
+      alert("La imagen supera el límite de 5MB.");
+      return;
+    }
+    
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      
+      const res = await fetch(`${API_URL}/api/upload`, {
+        method: 'POST',
+        body: formData
+      });
+      
+      if (res.ok) {
+        const data = await res.json();
+        const fullUrl = data.url.startsWith('http') ? data.url : `${API_URL}${data.url}`;
+        productForm.value.image = fullUrl;
+        alert("✨ Imagen del producto subida a R2 con éxito.");
+      } else {
+        const errMsg = await res.text();
+        alert(`Error al subir imagen a R2: ${errMsg}`);
+      }
+    } catch (err) {
+      console.error(err);
+      alert("Error al conectar con la API de subida.");
+    }
+  }
+};
 const selectedStyle = ref<string>('Todos');
 
 const filteredProducts = computed(() => {
@@ -412,6 +475,26 @@ const stats = computed(() => {
 });
 
 // ==========================================
+// ESTADO: VISTA PREVIA DETALLADA DE PRODUCTO
+// ==========================================
+const selectedProductForPreview = ref<any | null>(null);
+const expandedProductImageUrl = ref<string | null>(null);
+
+const highResExpandedImageUrl = computed(() => {
+  if (!expandedProductImageUrl.value) return '';
+  // Remplaza w=400 por w=1200 usando regex para obtener la versión de alta definición
+  return expandedProductImageUrl.value.replace(/w=\d+/, 'w=1200');
+});
+
+const openProductPreview = (product: any) => {
+  selectedProductForPreview.value = product;
+};
+
+const closeProductPreview = () => {
+  selectedProductForPreview.value = null;
+};
+
+// ==========================================
 // ESTADO: GALERÍA DE ITERACIONES LIGHTBOX
 // ==========================================
 const isGalleryOpen = ref(false);
@@ -532,14 +615,15 @@ const downloadGalleryDesign = () => {
         <!-- ZONA DE SUBIDA (Si no hay imagen) -->
         <div v-if="!uploadedImage" class="max-w-2xl w-full mx-auto">
           <div 
-            @dragover.prevent="uploadDragOver = true"
+            @click="!isUploadingImage && triggerFileInput()"
+            @dragover.prevent="!isUploadingImage && (uploadDragOver = true)"
             @dragleave.prevent="uploadDragOver = false"
-            @drop.prevent="handleDrop"
+            @drop.prevent="!isUploadingImage && handleDrop($event)"
             :class="[
-              uploadDragOver ? 'border-indigo-500 bg-indigo-500/10 shadow-lg shadow-indigo-500/5' : 'border-white/10 hover:border-indigo-500/50 hover:bg-white/5'
+              uploadDragOver ? 'border-indigo-500 bg-indigo-500/10 shadow-lg shadow-indigo-500/5' : 'border-white/10 hover:border-indigo-500/50 hover:bg-white/5',
+              isUploadingImage ? 'opacity-85 cursor-wait' : 'cursor-pointer'
             ]"
-            class="glass-card p-12 py-24 flex flex-col items-center justify-center border-2 border-dashed rounded-3xl cursor-pointer transition-all duration-300 text-center"
-            @click="triggerFileInput"
+            class="glass-card p-12 py-24 flex flex-col items-center justify-center border-2 border-dashed rounded-3xl transition-all duration-300 text-center select-none"
           >
             <input 
               type="file" 
@@ -547,14 +631,31 @@ const downloadGalleryDesign = () => {
               class="hidden" 
               accept="image/*" 
               @change="handleFileChange"
+              :disabled="isUploadingImage"
             />
-            <div class="w-16 h-16 rounded-2xl bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 flex items-center justify-center shadow-inner mb-4">
-              <Upload class="w-8 h-8 animate-pulse-subtle" />
+            
+            <!-- Estado: Subiendo -->
+            <div v-if="isUploadingImage" class="flex flex-col items-center gap-4">
+              <div class="relative w-16 h-16 flex items-center justify-center">
+                <div class="absolute inset-0 rounded-full border-4 border-slate-900 border-t-indigo-500 animate-spin"></div>
+                <Upload class="w-6 h-6 text-indigo-400 animate-pulse-subtle" />
+              </div>
+              <div>
+                <h3 class="text-lg font-semibold text-slate-100">Subiendo imagen al almacenamiento R2...</h3>
+                <p class="text-slate-400 text-sm mt-1">Espera un momento mientras guardamos tu foto en Cloudflare</p>
+              </div>
             </div>
-            <div>
-              <h3 class="text-lg font-semibold text-slate-100">Arrastra tu fotografía aquí</h3>
-              <p class="text-slate-400 text-sm mt-1">O haz clic para explorar en tu dispositivo</p>
-              <p class="text-slate-500 text-xs mt-3">Formatos soportados: JPG, PNG, WEBP, AVIF (Máx 10MB)</p>
+
+            <!-- Estado: Esperando archivo -->
+            <div v-else class="flex flex-col items-center">
+              <div class="w-16 h-16 rounded-2xl bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 flex items-center justify-center shadow-inner mb-4">
+                <Upload class="w-8 h-8 animate-pulse-subtle" />
+              </div>
+              <div>
+                <h3 class="text-lg font-semibold text-slate-100">Arrastra tu fotografía aquí</h3>
+                <p class="text-slate-400 text-sm mt-1">O haz clic para explorar en tu dispositivo</p>
+                <p class="text-slate-500 text-xs mt-3">Formatos soportados: JPG, PNG, WEBP, AVIF (Máx 10MB)</p>
+              </div>
             </div>
           </div>
         </div>
@@ -628,16 +729,20 @@ const downloadGalleryDesign = () => {
                   <div 
                     v-for="prod in products" 
                     :key="prod.id"
-                    @click="!isProductAlreadyPlaced(prod.id) && toggleProductSelection(prod.id)"
                     :class="[
                       isProductAlreadyPlaced(prod.id) ? 'opacity-50 cursor-default' : 'hover:bg-white/10 cursor-pointer',
                       selectedProductIds.includes(prod.id) ? 'border-indigo-500 bg-indigo-500/10' : 'border-white/5 bg-white/5'
                     ]"
                     class="flex items-center justify-between p-2.5 rounded-xl border transition-colors select-none"
                   >
-                    <div class="flex items-center gap-3 min-w-0">
-                      <img :src="prod.image" class="w-9 h-9 object-cover rounded-lg border border-white/10" />
-                      <div class="min-w-0">
+                    <div class="flex items-center gap-3 min-w-0 flex-grow">
+                      <div class="relative group/thumb cursor-zoom-in flex-shrink-0 animate-pulse-subtle" @click.stop="openProductPreview(prod)" title="Ver Ficha Técnica">
+                        <img :src="prod.image" class="w-9 h-9 object-cover rounded-lg border border-white/10 transition-transform group-hover/thumb:scale-105" />
+                        <div class="absolute inset-0 bg-black/40 opacity-0 group-hover/thumb:opacity-100 transition-opacity flex items-center justify-center rounded-lg">
+                          <Eye class="w-3.5 h-3.5 text-white" />
+                        </div>
+                      </div>
+                      <div class="min-w-0 flex-grow" @click="!isProductAlreadyPlaced(prod.id) && toggleProductSelection(prod.id)">
                         <p class="text-xs font-bold text-slate-200 truncate">{{ prod.name }}</p>
                         <p class="text-[10px] text-slate-400">${{ prod.price }} | {{ prod.style }}</p>
                       </div>
@@ -971,9 +1076,19 @@ const downloadGalleryDesign = () => {
                 :alt="prod.name" 
                 class="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
               />
-              <span class="absolute top-4 right-4 bg-[#090d16]/80 backdrop-blur-md border border-white/10 text-indigo-400 text-xs font-bold px-3 py-1 rounded-full">
+              <span class="absolute top-4 right-4 bg-[#090d16]/80 backdrop-blur-md border border-white/10 text-indigo-400 text-xs font-bold px-3 py-1 rounded-full z-10">
                 {{ prod.category }}
               </span>
+              <!-- Hover overlay with Zoom/Expand button -->
+              <div class="absolute inset-0 bg-slate-950/45 opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-center justify-center">
+                <button 
+                  @click="openProductPreview(prod)"
+                  class="bg-slate-950/90 hover:bg-indigo-600 border border-white/10 p-3 rounded-2xl text-indigo-300 hover:text-white shadow-xl flex items-center gap-1.5 transition-all duration-300 transform scale-90 group-hover:scale-100 font-semibold text-xs"
+                >
+                  <Eye class="w-4 h-4" />
+                  <span>Ver Ficha Técnica</span>
+                </button>
+              </div>
             </div>
 
             <div class="p-5 flex flex-col gap-3 flex-grow justify-between">
@@ -1119,7 +1234,16 @@ const downloadGalleryDesign = () => {
                 <tbody class="divide-y divide-white/5">
                   <tr v-for="prod in products" :key="prod.id" class="hover:bg-white/5 transition-colors">
                     <td class="p-4">
-                      <img :src="prod.image" :alt="prod.name" class="w-10 h-10 object-cover rounded-lg border border-white/10" />
+                      <div 
+                        @click="expandedProductImageUrl = prod.image"
+                        class="relative group/admin-thumb cursor-zoom-in w-10 h-10 rounded-lg overflow-hidden border border-white/10"
+                        title="Ampliar Imagen"
+                      >
+                        <img :src="prod.image" :alt="prod.name" class="w-full h-full object-cover transition-transform group-hover/admin-thumb:scale-105" />
+                        <div class="absolute inset-0 bg-black/40 opacity-0 group-hover/admin-thumb:opacity-100 transition-opacity flex items-center justify-center">
+                          <Eye class="w-3.5 h-3.5 text-white" />
+                        </div>
+                      </div>
                     </td>
                     <td class="p-4 font-bold text-slate-100">{{ prod.name }}</td>
                     <td class="p-4">{{ prod.category }}</td>
@@ -1131,6 +1255,9 @@ const downloadGalleryDesign = () => {
                     <td class="p-4 text-right font-bold text-slate-100">${{ prod.price }}</td>
                     <td class="p-4 text-center">
                       <div class="flex items-center justify-center gap-2">
+                        <button @click="openProductPreview(prod)" class="p-2 hover:bg-indigo-500/20 text-indigo-400 hover:text-indigo-300 rounded-lg transition-all" title="Ver Detalle">
+                          <Eye class="w-4 h-4" />
+                        </button>
                         <button @click="editProduct(prod)" class="p-2 hover:bg-indigo-500/20 text-indigo-400 hover:text-indigo-300 rounded-lg transition-all" title="Editar">
                           <Edit3 class="w-4 h-4" />
                         </button>
@@ -1208,7 +1335,7 @@ const downloadGalleryDesign = () => {
             <!-- Precio -->
             <div class="flex flex-col gap-1.5">
               <label class="text-xs font-semibold text-slate-400">Precio ($ USD)</label>
-              <input v-model="productForm.price" type="number" class="glass-input" required min="0" placeholder="0" />
+              <input v-model="productForm.price" type="number" step="any" class="glass-input" required min="0" placeholder="0" />
             </div>
             <!-- Dimensiones -->
             <div class="flex flex-col gap-1.5">
@@ -1217,10 +1344,52 @@ const downloadGalleryDesign = () => {
             </div>
           </div>
 
-          <!-- URL Imagen -->
+          <!-- URL Imagen / Subida de Archivo -->
           <div class="flex flex-col gap-1.5">
-            <label class="text-xs font-semibold text-slate-400">URL de la Imagen</label>
-            <input v-model="productForm.image" type="url" class="glass-input" placeholder="https://unsplash.com/..." />
+            <label class="text-xs font-semibold text-slate-400">Imagen del Producto (URL o subir archivo)</label>
+            <div class="flex gap-2">
+              <input v-model="productForm.image" type="text" class="glass-input flex-grow" placeholder="https://images.unsplash.com/..." />
+              <button 
+                type="button" 
+                @click="triggerAdminFileInput" 
+                class="px-4 py-2 bg-indigo-500/10 hover:bg-indigo-500/20 border border-indigo-500/25 rounded-xl text-indigo-300 text-xs font-bold transition-all flex items-center gap-1.5"
+              >
+                <Upload class="w-3.5 h-3.5" />
+                <span>Subir</span>
+              </button>
+            </div>
+            <input 
+              type="file" 
+              ref="adminFileInput" 
+              class="hidden" 
+              accept="image/*" 
+              @change="handleAdminFileChange"
+            />
+
+            <!-- Vista Previa de la Imagen del Producto -->
+            <div v-if="productForm.image" class="mt-2 flex items-center gap-3 p-2 bg-white/5 border border-white/10 rounded-xl relative group max-w-full">
+              <div class="relative w-12 h-12 rounded-lg overflow-hidden border border-white/10 flex-shrink-0 cursor-pointer" @click="expandedProductImageUrl = productForm.image">
+                <img :src="productForm.image" class="w-full h-full object-cover transition-transform duration-300 hover:scale-110" alt="Vista previa" />
+                <div class="absolute inset-0 bg-black/45 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                  <Maximize2 class="w-3.5 h-3.5 text-white" />
+                </div>
+              </div>
+              <div class="flex-grow min-w-0 pr-10">
+                <p class="text-[11px] text-slate-300 truncate font-mono">{{ productForm.image }}</p>
+                <span class="text-[10px] text-emerald-400 font-medium flex items-center gap-1">
+                  <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping"></span>
+                  <span>Imagen Enlazada</span>
+                </span>
+              </div>
+              <button 
+                type="button" 
+                @click="productForm.image = ''" 
+                class="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 bg-red-500/10 hover:bg-red-500/25 text-red-400 rounded-lg transition-colors border border-red-500/20"
+                title="Eliminar imagen"
+              >
+                <X class="w-3.5 h-3.5" />
+              </button>
+            </div>
           </div>
 
           <!-- Descripción -->
@@ -1407,6 +1576,118 @@ const downloadGalleryDesign = () => {
           </div>
         </div>
       </div>
+    </div>
+
+    <!-- MODAL DETALLE DE PRODUCTO PREMIUM (FICHA TÉCNICA) -->
+    <div 
+      v-if="selectedProductForPreview" 
+      class="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 backdrop-blur-md p-4 animate-fade-in"
+      @click.self="closeProductPreview"
+    >
+      <div class="glass-card max-w-2xl w-full p-6 md:p-8 rounded-3xl flex flex-col md:flex-row gap-6 relative border border-white/10 shadow-2xl animate-scale-up">
+        <!-- Botón Cerrar -->
+        <button 
+          @click="closeProductPreview" 
+          class="absolute top-4 right-4 p-2 rounded-xl bg-white/5 border border-white/10 text-slate-400 hover:text-slate-200 hover:bg-white/10 transition-all z-10"
+        >
+          <X class="w-4 h-4" />
+        </button>
+
+        <!-- Imagen del Producto -->
+        <div 
+          @click="expandedProductImageUrl = selectedProductForPreview.image"
+          class="w-full md:w-1/2 aspect-square md:aspect-auto md:h-[350px] rounded-2xl border border-white/10 bg-slate-900 overflow-hidden flex-shrink-0 cursor-zoom-in group/prodimg relative"
+          title="Hacer clic para ampliar imagen"
+        >
+          <img 
+            :src="selectedProductForPreview.image" 
+            :alt="selectedProductForPreview.name" 
+            class="w-full h-full object-cover transition-transform duration-500 group-hover/prodimg:scale-105"
+          />
+          <div class="absolute inset-0 bg-slate-950/20 opacity-0 group-hover/prodimg:opacity-100 transition-opacity duration-300 flex items-center justify-center">
+            <div class="bg-slate-950/80 backdrop-blur-md border border-white/10 p-2.5 rounded-xl text-indigo-300 shadow-xl flex items-center gap-1.5 transform scale-90 group-hover/prodimg:scale-100 transition-all duration-300">
+              <Maximize2 class="w-4 h-4" />
+              <span class="text-xs font-semibold">Ampliar Foto</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Ficha Técnica -->
+        <div class="w-full md:w-1/2 flex flex-col justify-between py-2">
+          <div class="flex flex-col gap-4">
+            <!-- Categoría y Estilo Badges -->
+            <div class="flex flex-wrap gap-2">
+              <span class="text-[10px] font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 px-2.5 py-0.5 rounded-full uppercase tracking-wider">
+                {{ selectedProductForPreview.category }}
+              </span>
+              <span class="text-[10px] font-bold bg-white/5 text-slate-300 border border-white/10 px-2.5 py-0.5 rounded-full uppercase tracking-wider">
+                {{ selectedProductForPreview.style }}
+              </span>
+            </div>
+
+            <!-- Nombre e Info Principal -->
+            <div>
+              <h3 class="text-xl font-extrabold text-slate-100 tracking-tight leading-tight">
+                {{ selectedProductForPreview.name }}
+              </h3>
+              <p class="text-xl font-black text-indigo-300 mt-1.5">
+                ${{ selectedProductForPreview.price }} USD
+              </p>
+            </div>
+
+            <!-- Medidas -->
+            <div class="flex flex-col gap-1">
+              <span class="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Dimensiones</span>
+              <span class="text-xs text-slate-300 font-medium bg-slate-950/40 border border-white/5 px-3 py-1.5 rounded-xl w-fit">
+                📏 {{ selectedProductForPreview.dimensions }}
+              </span>
+            </div>
+
+            <!-- Descripción -->
+            <div class="flex flex-col gap-1">
+              <span class="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Descripción</span>
+              <p class="text-xs text-slate-300 leading-relaxed max-h-36 overflow-y-auto scrollbar-thin">
+                {{ selectedProductForPreview.description || 'Sin descripción detallada disponible.' }}
+              </p>
+            </div>
+          </div>
+
+          <!-- Botones de Acción -->
+          <div class="mt-6 pt-4 border-t border-white/5 flex gap-2">
+            <button 
+              @click="quoteProduct(selectedProductForPreview)" 
+              class="flex-grow bg-indigo-500 hover:bg-indigo-600 text-white text-xs font-bold py-2.5 rounded-xl transition-all duration-200 flex items-center justify-center gap-1.5 shadow"
+            >
+              <DollarSign class="w-3.5 h-3.5" />
+              Cotizar Producto
+            </button>
+            <button 
+              @click="closeProductPreview" 
+              class="glass-btn-secondary py-2.5 px-4 text-xs font-bold"
+            >
+              Cerrar
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- LIGHTBOX AMPLIAR IMAGEN DE PRODUCTO (FULL SCREEN) -->
+    <div 
+      v-if="expandedProductImageUrl" 
+      class="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/98 backdrop-blur-md p-4 cursor-zoom-out animate-fade-in"
+      @click="expandedProductImageUrl = null"
+    >
+      <button 
+        @click="expandedProductImageUrl = null" 
+        class="absolute top-4 right-4 p-2.5 rounded-xl bg-white/5 border border-white/10 text-slate-400 hover:text-slate-200 transition-all cursor-pointer z-50"
+      >
+        <X class="w-5 h-5" />
+      </button>
+      <img 
+        :src="highResExpandedImageUrl" 
+        class="max-w-[95vw] max-h-[85vh] md:max-w-[80vw] md:max-h-[80vh] w-auto h-auto object-contain rounded-3xl shadow-2xl select-none border border-white/10 bg-slate-900/50"
+      />
     </div>
 
   </div>

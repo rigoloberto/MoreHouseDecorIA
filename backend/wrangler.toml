@@ -1,0 +1,26 @@
+# Cloudflare Wrangler Configuration for Deploying the Backend API
+name = "more-house-decor-ia-backend"
+main = "src/index.ts"
+compatibility_date = "2026-06-25"
+compatibility_flags = [ "nodejs_compat" ]
+
+# Environment Variables for Production
+[vars]
+PORT = "3000"
+
+# D1 SQLite Database Binding
+[[d1_databases]]
+binding = "DB"                               # Injected into env.DB in the code
+database_name = "more-house-decor-db"
+database_id = "82e42bcf-e68c-484f-a2c4-c0c82ba0e2ac"
+
+# R2 Object Storage Bucket Binding
+[[r2_buckets]]
+binding = "BUCKET"                           # Injected into env.BUCKET in the code
+bucket_name = "mh-decor-ia-bucket"
+preview_bucket_name = "mh-decor-ia-bucket-preview"
+
+# Local Development Server Config
+[dev]
+port = 3000
+

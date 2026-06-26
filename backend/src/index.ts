@@ -1,6 +1,18 @@
 import { Elysia, t } from 'elysia';
 import { cors } from '@elysiajs/cors';
 
+// Web Crypto SHA-256 hash helper compatible with both Bun and Cloudflare Workers
+async function sha256(message: string): Promise<string> {
+  const msgBuffer = new TextEncoder().encode(message);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+// SHA-256 hash of "admin123"
+const ADMIN_PASSWORD_SHA256 = "240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9";
+
+
 // ==========================================
 // CATALOGO DE PRODUCTOS (MOCK DATABASE)
 // ==========================================
@@ -15,114 +27,10 @@ interface Product {
   image: string; // URL mock
 }
 
-let catalog: Product[] = [
-  {
-    id: "prod-1",
-    name: "Sofá Modular Manta",
-    category: "Sala",
-    style: "Minimalista",
-    price: 1250,
-    dimensions: "280 x 100 x 75 cm",
-    description: "Sofá de tres módulos tapizado en lino texturizado repelente a manchas. Diseño bajo y moderno.",
-    image: "https://images.unsplash.com/photo-1555041469-a586c61ea9bc?auto=format&fit=crop&q=80&w=400"
-  },
-  {
-    id: "prod-2",
-    name: "Mesa de Centro Nido Alba",
-    category: "Sala",
-    style: "Moderno",
-    price: 320,
-    dimensions: "Diámetro 80 cm / 60 cm",
-    description: "Juego de dos mesas nido con superficie de chapa de roble y estructura metálica color negro mate.",
-    image: "https://images.unsplash.com/photo-1533090161767-e6ffed986c88?auto=format&fit=crop&q=80&w=400"
-  },
-  {
-    id: "prod-3",
-    name: "Mesa de Comedor Roble Nórdico",
-    category: "Comedor",
-    style: "Minimalista",
-    price: 850,
-    dimensions: "200 x 95 x 75 cm",
-    description: "Mesa para 8 personas fabricada en madera maciza de roble con acabado natural encerado.",
-    image: "https://images.unsplash.com/photo-1615066390971-03e4e1c36ddf?auto=format&fit=crop&q=80&w=400"
-  },
-  {
-    id: "prod-4",
-    name: "Silla de Comedor Cuero Viena",
-    category: "Comedor",
-    style: "Elegante",
-    price: 180,
-    dimensions: "50 x 55 x 85 cm",
-    description: "Silla ergonómica tapizada en cuero sintético premium color caramelo, patas de metal negro.",
-    image: "https://images.unsplash.com/photo-1567538096630-e0c55bd6374c?auto=format&fit=crop&q=80&w=400"
-  },
-  {
-    id: "prod-5",
-    name: "Lámpara de Pie Cobre Arco",
-    category: "Sala",
-    style: "Industrial",
-    price: 290,
-    dimensions: "Altura 200 cm (Brazo extendido)",
-    description: "Lámpara de arco de acero cepillado con pantalla de cobre. Base de mármol negro pesado.",
-    image: "https://images.unsplash.com/photo-1507473885765-e6ed057f782c?auto=format&fit=crop&q=80&w=400"
-  },
-  {
-    id: "prod-6",
-    name: "Escritorio de Madera y Hierro Fénix",
-    category: "Oficina",
-    style: "Industrial",
-    price: 450,
-    dimensions: "140 x 60 x 75 cm",
-    description: "Escritorio rústico con madera reciclada tratada y patas de soporte en hierro forjado estructural.",
-    image: "https://images.unsplash.com/photo-1518455027359-f3f8164ba6bd?auto=format&fit=crop&q=80&w=400"
-  },
-  {
-    id: "prod-7",
-    name: "Silla Ergonómica Aero",
-    category: "Oficina",
-    style: "Moderno",
-    price: 350,
-    dimensions: "65 x 65 x 115-125 cm",
-    description: "Silla giratoria de oficina con soporte lumbar activo, malla transpirable 3D y brazos 4D ajustables.",
-    image: "https://images.unsplash.com/photo-1505797149-43b0069ec26b?auto=format&fit=crop&q=80&w=400"
-  },
-  {
-    id: "prod-8",
-    name: "Aparador Nogal Imperial",
-    category: "Comedor",
-    style: "Lujo",
-    price: 1100,
-    dimensions: "180 x 45 x 80 cm",
-    description: "Aparador trinchador de madera de nogal con detalles de puertas de vidrio templado y tiradores de latón.",
-    image: "https://images.unsplash.com/photo-1595428774223-ef52624120d2?auto=format&fit=crop&q=80&w=400"
-  },
-  {
-    id: "prod-9",
-    name: "Poltrona Terciopelo Jade",
-    category: "Sala",
-    style: "Elegante",
-    price: 480,
-    dimensions: "85 x 80 x 90 cm",
-    description: "Butaca de acento tapizada en terciopelo verde esmeralda con patas metálicas doradas.",
-    image: "https://images.unsplash.com/photo-1598300042247-d088f8ab3a91?auto=format&fit=crop&q=80&w=400"
-  },
-  {
-    id: "prod-10",
-    name: "Consola Mármol Carrara",
-    category: "Sala",
-    style: "Lujo",
-    price: 750,
-    dimensions: "120 x 35 x 75 cm",
-    description: "Consola de entrada minimalista de alta gama con cubierta de mármol Carrara pulido y patas doradas.",
-    image: "https://images.unsplash.com/photo-1583847268964-b28dc8f51f92?auto=format&fit=crop&q=80&w=400"
-  }
-];
+// El catálogo heredado en memoria ha sido eliminado. Los datos ahora persisten 100% en D1 SQLite.
 
-// ==========================================
-// INICIALIZACIÓN DE ELYSIA Y ESTADÍSTICAS REALES
-// ==========================================
-// Generamos el hash seguro de la contraseña administrador al arrancar el servidor
-const ADMIN_PASSWORD_HASH = Bun.password.hashSync("admin123");
+// Admin password hash config is loaded statically above
+
 
 // Contadores en memoria para estadísticas reales de la app
 let totalGenerations = 0;
@@ -135,7 +43,7 @@ const styleStats: Record<string, number> = {
   "Industrial": 0
 };
 
-const app = new Elysia()
+const app = new Elysia({ aot: false })
   .use(cors())
   .get('/', () => ({ message: "Backend de More House Decor IA está activo y corriendo con Bun + Elysia!" }))
 
@@ -143,10 +51,10 @@ const app = new Elysia()
   .post('/api/auth/login', async ({ body, set }) => {
     const { username, password } = body as any;
     
-    // Verificación segura usando el hash de Bun (bcrypt/argon2 nativo en Zig)
-    const isPasswordCorrect = await Bun.password.verify(password, ADMIN_PASSWORD_HASH);
+    // Verificación usando Web Crypto SHA-256
+    const inputHash = await sha256(password);
     
-    if (username === 'admin' && isPasswordCorrect) {
+    if (username === 'admin' && inputHash === ADMIN_PASSWORD_SHA256) {
       return {
         success: true,
         token: "session_token_mock_more_house_ia_2026",
@@ -158,12 +66,24 @@ const app = new Elysia()
   })
 
   // Endpoints para Estadísticas Reales
-  .get('/api/stats', () => {
+  .get('/api/stats', async ({ env, set }) => {
+    if (!env || !(env as any).DB) {
+      set.status = 500;
+      return { error: "Base de datos D1 no disponible" };
+    }
+    let totalProducts = 0;
+    try {
+      const db = (env as any).DB;
+      const countRes = await db.prepare("SELECT COUNT(*) as count FROM catalog").first();
+      if (countRes) totalProducts = Number(countRes.count);
+    } catch (e) {
+      console.warn("Fallo al obtener totalProducts de D1:", e);
+    }
     return {
       totalGenerations,
       totalQuotes,
       styleStats,
-      totalProducts: catalog.length
+      totalProducts
     };
   })
 
@@ -173,9 +93,27 @@ const app = new Elysia()
   })
 
   // 2. CRUD DEL CATÁLOGO DE PRODUCTOS
-  .get('/api/catalog', () => catalog)
+  .get('/api/catalog', async ({ env, set }) => {
+    if (!env || !(env as any).DB) {
+      set.status = 500;
+      return { error: "Base de datos D1 no disponible" };
+    }
+    try {
+      const db = (env as any).DB;
+      const { results } = await db.prepare("SELECT * FROM catalog").all();
+      return results;
+    } catch (err: any) {
+      console.error("Error al consultar D1:", err);
+      set.status = 500;
+      return { error: "Error de base de datos", details: err.message };
+    }
+  })
   
-  .post('/api/catalog', ({ body, set }) => {
+  .post('/api/catalog', async ({ body, env, set }) => {
+    if (!env || !(env as any).DB) {
+      set.status = 500;
+      return { error: "Base de datos D1 no disponible" };
+    }
     const product = body as Partial<Product>;
     if (!product.name || !product.category || !product.style || !product.price) {
       set.status = 400;
@@ -191,37 +129,73 @@ const app = new Elysia()
       description: product.description || "",
       image: product.image || "https://images.unsplash.com/photo-1586023492125-27b2c045efd7?auto=format&fit=crop&q=80&w=400"
     };
-    catalog.push(newProduct);
-    return { success: true, product: newProduct };
+
+    try {
+      const db = (env as any).DB;
+      await db.prepare(
+        "INSERT INTO catalog (id, name, category, style, price, dimensions, description, image) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+      ).bind(
+        newProduct.id, newProduct.name, newProduct.category, newProduct.style, newProduct.price, newProduct.dimensions, newProduct.description, newProduct.image
+      ).run();
+      return { success: true, product: newProduct };
+    } catch (err: any) {
+      console.error("Error al insertar en D1:", err);
+      set.status = 500;
+      return { error: "Error al guardar en base de datos D1", details: err.message };
+    }
   })
 
-  .put('/api/catalog/:id', ({ params, body, set }) => {
-    const index = catalog.findIndex(p => p.id === params.id);
-    if (index === -1) {
-      set.status = 404;
-      return { error: "Producto no encontrado" };
+  .put('/api/catalog/:id', async ({ params, body, env, set }) => {
+    if (!env || !(env as any).DB) {
+      set.status = 500;
+      return { error: "Base de datos D1 no disponible" };
     }
     const updated = body as Partial<Product>;
-    catalog[index] = {
-      ...catalog[index],
-      ...updated,
-      price: updated.price ? Number(updated.price) : catalog[index].price
-    };
-    return { success: true, product: catalog[index] };
-  })
+    const priceVal = updated.price ? Number(updated.price) : undefined;
 
-  .delete('/api/catalog/:id', ({ params, set }) => {
-    const index = catalog.findIndex(p => p.id === params.id);
-    if (index === -1) {
-      set.status = 404;
-      return { error: "Producto no encontrado" };
+    try {
+      const db = (env as any).DB;
+      await db.prepare(
+        "UPDATE catalog SET name = COALESCE(?, name), category = COALESCE(?, category), style = COALESCE(?, style), price = COALESCE(?, price), dimensions = COALESCE(?, dimensions), description = COALESCE(?, description), image = COALESCE(?, image) WHERE id = ?"
+      ).bind(
+        updated.name || null, updated.category || null, updated.style || null, priceVal !== undefined ? priceVal : null, updated.dimensions || null, updated.description || null, updated.image || null, params.id
+      ).run();
+      
+      const product = await db.prepare("SELECT * FROM catalog WHERE id = ?").bind(params.id).first();
+      if (!product) {
+        set.status = 404;
+        return { error: "Producto no encontrado" };
+      }
+      return { success: true, product };
+    } catch (err: any) {
+      console.error("Error al actualizar en D1:", err);
+      set.status = 500;
+      return { error: "Error al actualizar en base de datos D1", details: err.message };
     }
-    const deleted = catalog.splice(index, 1);
-    return { success: true, deleted: deleted[0] };
   })
 
+  .delete('/api/catalog/:id', async ({ params, env, set }) => {
+    if (!env || !(env as any).DB) {
+      set.status = 500;
+      return { error: "Base de datos D1 no disponible" };
+    }
+    try {
+      const db = (env as any).DB;
+      const product = await db.prepare("SELECT * FROM catalog WHERE id = ?").bind(params.id).first();
+      if (!product) {
+        set.status = 404;
+        return { error: "Producto no encontrado" };
+      }
+      await db.prepare("DELETE FROM catalog WHERE id = ?").bind(params.id).run();
+      return { success: true, deleted: product };
+    } catch (err: any) {
+      console.error("Error al eliminar en D1:", err);
+      set.status = 500;
+      return { error: "Error al eliminar en base de datos D1", details: err.message };
+    }
+  })
   // 3. GENERADOR DE DISEÑO POR IA (PROCESAMIENTO)
-  .post('/api/generate', async ({ body, set }) => {
+  .post('/api/generate', async ({ body, env, set }) => {
     try {
       const { image, preferences, selectedProductIds, qualityMode } = body as { 
         image: string; 
@@ -230,9 +204,9 @@ const app = new Elysia()
         qualityMode?: string;
       };
 
-      if (!image || !preferences) {
-        set.status = 400;
-        return { error: "Faltan parámetros requeridos (imagen base64 o preferencias)" };
+      if (!env || !(env as any).DB) {
+        set.status = 500;
+        return { error: "Base de datos D1 no disponible" };
       }
 
       // Incrementar estadísticas reales de uso
@@ -246,8 +220,40 @@ const app = new Elysia()
       const cfApiToken = process.env.CLOUDFLARE_API_TOKEN;
       const hfToken = process.env.HF_TOKEN;
 
-      // A. EXTRACCIÓN DE LA IMAGEN EN BASE64 LIMPIA
-      const base64Data = image.replace(/^data:image\/\w+;base64,/, "");
+      // Cargar catálogo desde D1
+      let activeCatalog: Product[] = [];
+      try {
+        const db = (env as any).DB;
+        const { results } = await db.prepare("SELECT * FROM catalog").all();
+        activeCatalog = results as any[];
+      } catch (e: any) {
+        console.error("Fallo al cargar catálogo de D1 en /api/generate:", e);
+        set.status = 500;
+        return { error: "Error al obtener catálogo de D1", details: e.message };
+      }
+
+      // A. OBTENER IMAGEN DE HABITACIÓN EN FORMATO BLOB Y BASE64 PARA GEMINI
+      let roomBlob: Blob;
+      let base64Data = "";
+      if (image.startsWith('data:')) {
+        base64Data = image.replace(/^data:image\/\w+;base64,/, "");
+        const roomBuffer = Buffer.from(base64Data, "base64");
+        roomBlob = new Blob([roomBuffer], { type: "image/jpeg" });
+      } else {
+        console.log(`Descargando imagen de habitación desde URL: ${image}`);
+        let fetchUrl = image;
+        if (image.startsWith('/')) {
+          fetchUrl = `http://localhost:3000${image}`;
+        }
+        const imgResponse = await fetch(fetchUrl);
+        if (!imgResponse.ok) {
+          throw new Error(`Fallo de descarga de habitación base desde ${fetchUrl}: HTTP ${imgResponse.status}`);
+        }
+        const imgBuffer = await imgResponse.arrayBuffer();
+        const buffer = Buffer.from(imgBuffer);
+        base64Data = buffer.toString("base64");
+        roomBlob = new Blob([imgBuffer], { type: "image/jpeg" });
+      };
 
       // B. ENLACE DE PREFERENCIAS
       const spaceType = preferences.spaceType || "Sala";
@@ -258,7 +264,7 @@ const app = new Elysia()
 
       // Listado de productos seleccionados manualmente
       const manualProductIds = selectedProductIds || [];
-      const selectedProductsManual = catalog.filter(p => manualProductIds.includes(p.id));
+      const selectedProductsManual = activeCatalog.filter(p => manualProductIds.includes(p.id));
       const manualProductsStr = selectedProductsManual.map(p => 
         `- [ID: ${p.id}] ${p.name} (${p.category}): ${p.description}. Precio: $${p.price}. Medidas: ${p.dimensions}`
       ).join("\n");
@@ -272,7 +278,7 @@ const app = new Elysia()
 - Instrucciones especiales del usuario (muebles extras, presupuesto, etc.): "${customText}"
 
 Tenemos el siguiente catálogo oficial de productos de "More House S.A.":
-${JSON.stringify(catalog.map(p => ({ id: p.id, name: p.name, category: p.category, style: p.style, price: p.price, description: p.description, dimensions: p.dimensions })))}
+${JSON.stringify(activeCatalog.map(p => ({ id: p.id, name: p.name, category: p.category, style: p.style, price: p.price, description: p.description, dimensions: p.dimensions })))}
 
 Tu tarea es:
 1. Si el usuario ha seleccionado productos manualmente, debes colocarlos de forma obligatoria en el diseño. Los productos seleccionados manualmente son:
@@ -369,7 +375,7 @@ Genera una respuesta en formato JSON estrictamente válido, sin markdown ni comi
         console.error("Todos los modelos de curación fallaron. Usando recomendación por defecto.");
         const fallbackSelected = selectedProductsManual.length > 0 
           ? selectedProductsManual 
-          : [catalog[0]];
+          : (activeCatalog.length > 0 ? [activeCatalog[0]] : []);
         
         let fallbackPrompt = `A beautifully designed ${spaceType} in ${style} style, matching color palette ${colors} with ${lighting}. Using input_image_0 as base room layout, `;
         fallbackSelected.forEach((prod, index) => {
@@ -387,7 +393,7 @@ Genera una respuesta en formato JSON estrictamente válido, sin markdown ni comi
       // D. CONSOLIDACIÓN DE PRODUCTOS A GENERAR
       const selectedList: Product[] = [];
       for (const item of aiResponseJson.selected_products || []) {
-        const match = catalog.find(p => p.id === item.id || p.name.toLowerCase().includes(item.name.toLowerCase()));
+        const match = activeCatalog.find(p => p.id === item.id || p.name.toLowerCase().includes(item.name.toLowerCase()));
         if (match && !selectedList.some(s => s.id === match.id)) {
           selectedList.push(match);
         }
@@ -416,8 +422,6 @@ Genera una respuesta en formato JSON estrictamente válido, sin markdown ni comi
       formData.append("prompt", imagePrompt);
 
       // input_image_0 (Cuarto actual)
-      const roomBuffer = Buffer.from(base64Data, "base64");
-      const roomBlob = new Blob([roomBuffer], { type: "image/jpeg" });
       formData.append("input_image_0", roomBlob, "room.jpg");
 
       // input_image_1, input_image_2, input_image_3 (Productos)
@@ -561,6 +565,66 @@ Genera una respuesta en formato JSON estrictamente válido, sin markdown ni comi
     }
   })
 
+  // 5. CARGA Y SERVICIO DE ARCHIVOS EN R2
+  .post('/api/upload', async ({ body, env, set }) => {
+    if (!env || !(env as any).BUCKET) {
+      set.status = 500;
+      return { error: "El almacenamiento R2 no está configurado o vinculado" };
+    }
+    const { file } = body as { file: File };
+    if (!file) {
+      set.status = 400;
+      return { error: "No se proporcionó ningún archivo" };
+    }
+    
+    try {
+      const bucket = (env as any).BUCKET;
+      const key = `${Date.now()}-${file.name.replace(/\s+/g, '_')}`;
+      
+      // Subir el archivo binario a R2
+      const arrayBuffer = await file.arrayBuffer();
+      await bucket.put(key, arrayBuffer, {
+        httpMetadata: { contentType: file.type }
+      });
+      
+      return { 
+        success: true, 
+        key,
+        url: `/api/files/${key}` 
+      };
+    } catch (e: any) {
+      console.error("Error al subir a R2:", e);
+      set.status = 500;
+      return { error: "Error al guardar archivo en R2", details: e.message };
+    }
+  }, {
+    body: t.Object({
+      file: t.File()
+    })
+  })
+
+  .get('/api/files/:key', async ({ params, env, set }) => {
+    if (!env || !(env as any).BUCKET) {
+      set.status = 500;
+      return { error: "El almacenamiento R2 no está configurado o vinculado" };
+    }
+    try {
+      const bucket = (env as any).BUCKET;
+      const object = await bucket.get(params.key);
+      if (!object) {
+        set.status = 404;
+        return { error: "Archivo no encontrado" };
+      }
+      const buffer = await object.arrayBuffer();
+      set.headers['Content-Type'] = object.httpMetadata?.contentType || 'image/jpeg';
+      return Buffer.from(buffer);
+    } catch (e: any) {
+      console.error("Error al leer de R2:", e);
+      set.status = 500;
+      return { error: "Error al leer archivo de R2", details: e.message };
+    }
+  })
+
   // 4. PROXY DE IMÁGENES PARA EVITAR ERRORES DE CORS EN DESCARGAS
   .get('/api/proxy', async ({ query, set }) => {
     const url = query.url;
@@ -592,9 +656,21 @@ Genera una respuesta en formato JSON estrictamente válido, sin markdown ni comi
       set.status = 500;
       return { error: "Error al hacer proxy de la imagen", details: e.message || e };
     }
-  })
+  });
 
-  // LISTEN
-  .listen(process.env.PORT || 3000);
+// LISTEN
+if (typeof Bun !== 'undefined') {
+  app.listen(process.env.PORT || 3000);
+  console.log(`Servidor activo corriendo en http://localhost:${app.server?.port}`);
+}
 
-console.log(`Servidor activo corriendo en http://localhost:${app.server?.port}`);
+export default {
+  async fetch(request: Request, env: any, ctx: any) {
+    return new Elysia({ aot: false })
+      .decorate('env', env)
+      .use(app)
+      .handle(request);
+  }
+};
+
+

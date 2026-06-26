@@ -3,15 +3,19 @@
   "version": "1.0.0",
   "main": "src/index.ts",
   "scripts": {
-    "dev": "bun run --hot src/index.ts",
+    "dev": "echo acutualmente en desuso, intenta correr en su lugar con npm run dev:cf o npx wrangler dev",
     "dev:models": "bun run --hot src/dev.ts",
-    "start": "bun run src/index.ts"
+    "start": "bun run src/index.ts",
+    "dev:cf": "wrangler dev",
+    "dev:cf:remote": "wrangler dev --remote",
+    "deploy": "bunx wrangler deploy"
   },
   "dependencies": {
     "elysia": "^1.0.0",
     "@elysiajs/cors": "^1.0.0"
   },
   "devDependencies": {
-    "typescript": "^5.0.0"
+    "typescript": "^5.0.0",
+    "wrangler": "^4.105.0"
   }
 }
