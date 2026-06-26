@@ -113,21 +113,28 @@ class node_backend_api,node_diagnostics,node_staging_flow,node_metadata,node_cat
 
 ## 🛠️ Requisitos Previos
 
-Dado que el proyecto utiliza tecnologías de alto rendimiento modernas, es indispensable tener instalado **Bun**:
-*   **Instalación rápida en Windows (PowerShell):**
-    ```powershell
-    powershell -c "irm bun.sh/install.ps1 | iex"
-    ```
-*   **Instalación en macOS / Linux:**
-    ```bash
-    curl -fsSL https://bun.sh/install | bash
-    ```
+Dado que el proyecto utiliza herramientas modernas y de alto rendimiento, es necesario tener instalado lo siguiente:
+
+1. **Bun** (Gestor de paquetes rápido):
+   * **Instalación en Windows (PowerShell):**
+     ```powershell
+     powershell -c "irm bun.sh/install.ps1 | iex"
+     ```
+   * **Instalación en macOS / Linux:**
+     ```bash
+     curl -fsSL https://bun.sh/install | bash
+     ```
+2. **Node.js (LTS)** (Obligatorio en Windows/macOS para correr el simulador local de Cloudflare Workers Wrangler):
+   * Puedes descargarlo de [nodejs.org](https://nodejs.org/) o instalarlo vía terminal en Windows con:
+     ```powershell
+     winget install OpenJS.NodeJS.LTS
+     ```
 
 ---
 
-## ⚙️ Configuración del Proyecto (Post-GitHub)
+## ⚙️ Configuración del Proyecto (Paso a Paso)
 
-Al descargar el repositorio desde GitHub, notarás que faltan las dependencias (`node_modules`) y las claves de configuración de las APIs (`.env`), ya que estas están protegidas por el archivo `.gitignore`. Sigue estos pasos para configurarlo:
+Al descargar el repositorio desde GitHub, faltarán las dependencias (`node_modules`) y las claves de configuración de las APIs (`.env`), ya que están protegidas por el archivo `.gitignore`. Sigue estos pasos para configurarlo:
 
 ### 1. Configurar las Claves de API en el Backend
 Navega a la carpeta `/backend` y crea un archivo llamado **`.env`** con la siguiente estructura:
@@ -140,10 +147,9 @@ HF_TOKEN="TU_TOKEN_DE_HUGGING_FACE"
 PORT=3000
 ```
 
-*   **Gemini API Key:** Se obtiene gratis en [Google AI Studio](https://aistudio.google.com/).
-*   **Hugging Face Token:** Se obtiene gratis en *Settings -> Access Tokens* en [Hugging Face](https://huggingface.co/).
-*   **Cloudflare Workers AI:** Se obtiene gratis en tu cuenta de [Cloudflare](https://dash.cloudflare.com/) (sección *My Profile -> API Tokens* usando la plantilla *Workers AI*).
-    > **Tip**: Si excedes el límite gratuito diario de 10,000 neuronas de Cloudflare, puedes cambiar tu plan a *Workers Paid* (desde $5 USD/mes) para habilitar el pago por uso a un costo de solo **$0.011 USD por cada 1,000 neuronas** adicionales (menos de un centavo de dólar por renderizado).
+* **Gemini API Key:** Consíguela gratis en [Google AI Studio](https://aistudio.google.com/).
+* **Hugging Face Token:** Consíguelo gratis en *Settings -> Access Tokens* en [Hugging Face](https://huggingface.co/).
+* **Cloudflare Workers AI:** Consíguelo gratis en tu cuenta de [Cloudflare](https://dash.cloudflare.com/) (*My Profile -> API Tokens* con la plantilla *Workers AI*).
 
 ---
 
@@ -151,26 +157,30 @@ PORT=3000
 
 Abre dos terminales por separado en la raíz del proyecto para ejecutar el Backend y el Frontend en paralelo:
 
-### Terminal 1: Iniciar el Servidor (Backend)
+### Terminal 1: Servidor Local (Backend en Puerto 3000)
 1. Navega a la carpeta `backend`:
    ```bash
    cd backend
    ```
-2. Instala las dependencias con Bun:
+2. Instala las dependencias:
    ```bash
    bun install
    ```
-3. Levanta el servidor en modo desarrollo (con auto-recarga en caliente `--hot`):
+3. **Inicializar y poblar la Base de Datos D1 (Solo la primera vez)**:
+   Ejecuta el siguiente comando para crear las tablas SQLite y poblar el catálogo de muebles inicial:
    ```bash
-   bun run dev
+   bunx wrangler d1 execute more-house-decor-db --local --file=database/schema.sql
    ```
-   *El backend estará corriendo en: [http://localhost:3000](http://localhost:3000)*
-   *Opcional: Para levantar el servidor de diagnóstico de API, ejecuta `bun run dev:models` en el puerto 3001.*
+4. Levanta el simulador de Cloudflare local:
+   ```bash
+   npm run dev:cf
+   ```
+   *(También puedes usar `bun run dev:cf` o `npx wrangler dev`)*. El servidor emulará D1 y R2 de forma local en: [http://localhost:3000](http://localhost:3000).
 
-### Terminal 2: Iniciar la Webapp (Frontend)
+### Terminal 2: Aplicación Web (Frontend en Puerto 5173)
 1. Navega a la carpeta `frontend`:
    ```bash
-   cd ../frontend
+   cd frontend
    ```
 2. Instala las dependencias:
    ```bash
@@ -180,14 +190,18 @@ Abre dos terminales por separado en la raíz del proyecto para ejecutar el Backe
    ```bash
    bun run dev
    ```
-   *El frontend estará listo y accesible en: [http://localhost:5173](http://localhost:5173)*
+   *La web estará lista y accesible en: [http://localhost:5173](http://localhost:5173)*
 
 ---
 
 ## 🔑 Credenciales para Pruebas del Panel Administrador
 
-Para probar el panel administrativo del catálogo, ve a la pestaña **Administrador** e inicia sesión con estas credenciales:
-*   **Usuario:** `admin`
-*   **Contraseña:** `admin123`
+Para probar el panel administrativo del catálogo de muebles:
+1. Abre la web `http://localhost:5173`.
+2. Haz clic en la pestaña **Administrador** en la parte superior.
+3. Inicia sesión con las siguientes credenciales:
+   * **Usuario:** `admin`
+   * **Contraseña:** `admin123`
 
-Desde allí podrás simular el inventario agregando, editando o eliminando muebles reales de la base de datos local y verás cómo la IA de Gemini los prioriza en sus recomendaciones.
+Desde el panel podrás agregar muebles, subir fotos directamente a tu almacenamiento R2, editarlos o eliminarlos. Las consultas e inserciones persistirán de forma robusta en tu base de datos local SQLite de Cloudflare D1.
+
