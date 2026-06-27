@@ -9,6 +9,37 @@ async function sha256(message: string): Promise<string> {
   return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
+// Helper para leer archivos directamente de R2 o descargarlos vía HTTP
+async function getFileBuffer(url: string, bucket: any): Promise<ArrayBuffer | null> {
+  const r2Match = url.match(/\/api\/files\/([^?#\/]+)/);
+  if (r2Match && bucket) {
+    const key = decodeURIComponent(r2Match[1]);
+    console.log(`[R2 Helper] Leyendo directamente de R2: ${key}`);
+    const object = await bucket.get(key);
+    if (object) {
+      return await object.arrayBuffer();
+    }
+    console.warn(`[R2 Helper] Clave no encontrada en R2: ${key}`);
+  }
+  
+  let fetchUrl = url;
+  if (url.startsWith('/')) {
+    fetchUrl = `http://localhost:3000${url}`;
+  }
+  console.log(`[HTTP Helper] Descargando imagen desde: ${fetchUrl}`);
+  try {
+    const response = await fetch(fetchUrl);
+    if (response.ok) {
+      return await response.arrayBuffer();
+    }
+    console.error(`[HTTP Helper] Error descargando: ${response.status} ${response.statusText}`);
+  } catch (e) {
+    console.error(`[HTTP Helper] Error al descargar de ${fetchUrl}:`, e.message || e);
+  }
+  return null;
+}
+
+
 // SHA-256 hash of "admin123"
 const ADMIN_PASSWORD_SHA256 = "240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9";
 
@@ -26,6 +57,9 @@ interface Product {
   dimensions: string;
   image: string; // URL mock
 }
+
+// Caché del catálogo en memoria
+let cachedCatalog: Product[] | null = null;
 
 // El catálogo heredado en memoria ha sido eliminado. Los datos ahora persisten 100% en D1 SQLite.
 
@@ -98,10 +132,15 @@ const app = new Elysia({ aot: false })
       set.status = 500;
       return { error: "Base de datos D1 no disponible" };
     }
+    if (cachedCatalog) {
+      console.log("[Cache] Retornando catálogo desde la caché de memoria.");
+      return cachedCatalog;
+    }
     try {
       const db = (env as any).DB;
       const { results } = await db.prepare("SELECT * FROM catalog").all();
-      return results;
+      cachedCatalog = results as any[];
+      return cachedCatalog;
     } catch (err: any) {
       console.error("Error al consultar D1:", err);
       set.status = 500;
@@ -137,6 +176,7 @@ const app = new Elysia({ aot: false })
       ).bind(
         newProduct.id, newProduct.name, newProduct.category, newProduct.style, newProduct.price, newProduct.dimensions, newProduct.description, newProduct.image
       ).run();
+      cachedCatalog = null; // Invalida la caché al insertar un producto nuevo
       return { success: true, product: newProduct };
     } catch (err: any) {
       console.error("Error al insertar en D1:", err);
@@ -166,6 +206,7 @@ const app = new Elysia({ aot: false })
         set.status = 404;
         return { error: "Producto no encontrado" };
       }
+      cachedCatalog = null; // Invalida la caché al actualizar un producto
       return { success: true, product };
     } catch (err: any) {
       console.error("Error al actualizar en D1:", err);
@@ -187,6 +228,7 @@ const app = new Elysia({ aot: false })
         return { error: "Producto no encontrado" };
       }
       await db.prepare("DELETE FROM catalog WHERE id = ?").bind(params.id).run();
+      cachedCatalog = null; // Invalida la caché al eliminar un producto
       return { success: true, deleted: product };
     } catch (err: any) {
       console.error("Error al eliminar en D1:", err);
@@ -219,13 +261,21 @@ const app = new Elysia({ aot: false })
       const cfAccountId = process.env.CLOUDFLARE_ACCOUNT_ID;
       const cfApiToken = process.env.CLOUDFLARE_API_TOKEN;
       const hfToken = process.env.HF_TOKEN;
+      const bucket = (env as any).BUCKET;
 
-      // Cargar catálogo desde D1
+      // Cargar catálogo desde D1 (utilizar caché si está disponible)
       let activeCatalog: Product[] = [];
       try {
-        const db = (env as any).DB;
-        const { results } = await db.prepare("SELECT * FROM catalog").all();
-        activeCatalog = results as any[];
+        if (cachedCatalog) {
+          console.log("[Cache] Usando catálogo cacheado en /api/generate");
+          activeCatalog = cachedCatalog;
+        } else {
+          console.log("[D1] Cargando catálogo de base de datos en /api/generate");
+          const db = (env as any).DB;
+          const { results } = await db.prepare("SELECT * FROM catalog").all();
+          activeCatalog = results as any[];
+          cachedCatalog = activeCatalog; // Guardar en caché
+        }
       } catch (e: any) {
         console.error("Fallo al cargar catálogo de D1 en /api/generate:", e);
         set.status = 500;
@@ -233,27 +283,21 @@ const app = new Elysia({ aot: false })
       }
 
       // A. OBTENER IMAGEN DE HABITACIÓN EN FORMATO BLOB Y BASE64 PARA GEMINI
-      let roomBlob: Blob;
-      let base64Data = "";
+      let roomBuffer: ArrayBuffer | null = null;
       if (image.startsWith('data:')) {
-        base64Data = image.replace(/^data:image\/\w+;base64,/, "");
-        const roomBuffer = Buffer.from(base64Data, "base64");
-        roomBlob = new Blob([roomBuffer], { type: "image/jpeg" });
+        const base64 = image.replace(/^data:image\/\w+;base64,/, "");
+        roomBuffer = Buffer.from(base64, "base64");
       } else {
-        console.log(`Descargando imagen de habitación desde URL: ${image}`);
-        let fetchUrl = image;
-        if (image.startsWith('/')) {
-          fetchUrl = `http://localhost:3000${image}`;
-        }
-        const imgResponse = await fetch(fetchUrl);
-        if (!imgResponse.ok) {
-          throw new Error(`Fallo de descarga de habitación base desde ${fetchUrl}: HTTP ${imgResponse.status}`);
-        }
-        const imgBuffer = await imgResponse.arrayBuffer();
-        const buffer = Buffer.from(imgBuffer);
-        base64Data = buffer.toString("base64");
-        roomBlob = new Blob([imgBuffer], { type: "image/jpeg" });
-      };
+        roomBuffer = await getFileBuffer(image, bucket);
+      }
+
+      if (!roomBuffer) {
+        set.status = 400;
+        return { error: "No se pudo obtener la imagen de la habitación base" };
+      }
+      
+      const roomBlob = new Blob([roomBuffer], { type: "image/jpeg" });
+      const base64Data = Buffer.from(roomBuffer).toString("base64");
 
       // B. ENLACE DE PREFERENCIAS
       const spaceType = preferences.spaceType || "Sala";
@@ -265,34 +309,79 @@ const app = new Elysia({ aot: false })
       // Listado de productos seleccionados manualmente
       const manualProductIds = selectedProductIds || [];
       const selectedProductsManual = activeCatalog.filter(p => manualProductIds.includes(p.id));
-      const manualProductsStr = selectedProductsManual.map(p => 
-        `- [ID: ${p.id}] ${p.name} (${p.category}): ${p.description}. Precio: $${p.price}. Medidas: ${p.dimensions}`
-      ).join("\n");
 
-      // C. PROMPT PARA GEMINI (CLASIFICACIÓN Y AUTOCURACIÓN)
-      const prompt = `Analiza la imagen de la habitación adjunta (input_image_0) y las siguientes especificaciones de diseño:
+      // C. PRE-SELECCIONAR PRODUCTOS A RENDERIZAR
+      const selectedList: Product[] = [...selectedProductsManual];
+      if (selectedList.length < 3) {
+        const remainingSlots = 3 - selectedList.length;
+        const availableCatalog = activeCatalog.filter(p => !selectedList.some(s => s.id === p.id));
+        
+        let recommended = availableCatalog.filter(p => p.style.toLowerCase() === style.toLowerCase());
+        if (recommended.length < remainingSlots) {
+          const otherStyle = availableCatalog.filter(p => p.style.toLowerCase() !== style.toLowerCase());
+          recommended = [...recommended, ...otherStyle];
+        }
+        selectedList.push(...recommended.slice(0, remainingSlots));
+      }
+      const finalProductsToRender = selectedList.slice(0, 3);
+
+      // D. DESCARGAR IMÁGENES DE LOS PRODUCTOS PARA PASARLAS A GEMINI
+      const productImagesData = [];
+      const productDescriptionsText = [];
+
+      for (let i = 0; i < finalProductsToRender.length; i++) {
+        const prod = finalProductsToRender[i];
+        productDescriptionsText.push(
+          `- [input_image_${i + 1}]: Mueble "${prod.name}" (${prod.category}). Estilo: ${prod.style}. Medidas: ${prod.dimensions}. Descripción: ${prod.description}`
+        );
+        
+        try {
+          const imgBuffer = await getFileBuffer(prod.image, bucket);
+          if (imgBuffer) {
+            const mimeType = "image/jpeg";
+            const base64 = Buffer.from(imgBuffer).toString("base64");
+            productImagesData.push({
+              inlineData: {
+                mimeType,
+                data: base64
+              }
+            });
+          }
+        } catch (e) {
+          console.error(`Error al procesar imagen del producto ${prod.id} para Gemini:`, e);
+        }
+      }
+
+      // E. PROMPT PARA GEMINI (CLASIFICACIÓN Y REDACCIÓN TEXT-TO-IMAGE DE ALTA FIDELIDAD)
+      const prompt = `Analiza la imagen de la habitación adjunta (la primera imagen, que llamaremos la habitación base o input_image_0) y las fotos de los productos del catálogo adjuntas a continuación.
+Especificaciones del espacio y preferencias:
 - Tipo de espacio: ${spaceType}
 - Estilo estético deseado: ${style}
 - Paleta cromática deseada: ${colors}
 - Iluminación: ${lighting}
-- Instrucciones especiales del usuario (muebles extras, presupuesto, etc.): "${customText}"
+- Instrucciones especiales del usuario: "${customText}"
 
-Tenemos el siguiente catálogo oficial de productos de "More House S.A.":
-${JSON.stringify(activeCatalog.map(p => ({ id: p.id, name: p.name, category: p.category, style: p.style, price: p.price, description: p.description, dimensions: p.dimensions })))}
+Productos seleccionados del catálogo para colocar en el diseño:
+${productDescriptionsText.length > 0 ? productDescriptionsText.join("\n") : "Ninguno"}
+
+Las imágenes adjuntas están en este orden exacto:
+1. Habitación base (input_image_0)
+${finalProductsToRender.map((prod, index) => `${index + 2}. Imagen del producto "${prod.name}" (input_image_${index + 1})`).join("\n")}
 
 Tu tarea es:
-1. Si el usuario ha seleccionado productos manualmente, debes colocarlos de forma obligatoria en el diseño. Los productos seleccionados manualmente son:
-${manualProductsStr || "Ninguno (Selección automática activa)"}
-
-2. Si el usuario no seleccionó productos manualmente, o seleccionó menos de 3, debes elegir de manera inteligente productos adicionales de nuestro catálogo que complementen el espacio de acuerdo a las especificaciones y presupuesto del cliente, hasta tener un máximo de 3 productos en total.
-3. Justifica brevemente la colocación de cada producto.
-4. Genera un prompt en inglés ultra-descriptivo para el generador de imágenes FLUX.2 con soporte multi-referencia. En el prompt, debes asociar de forma directa cada producto a su índice de imagen física:
+1. Evaluar el espacio y detallar los problemas reales que se solucionan en este paso de diseño (distribución, colores, combinación).
+2. Escribir una justificación convincente de cómo y dónde se integra cada producto en el espacio.
+3. Generar un prompt en inglés ultra-descriptivo para el generador de imágenes FLUX.2.
+   
+   IMPORTANTE PARA EL PROMPT DE FLUX.2:
+   En tu prompt final en inglés, debes describir detalladamente cómo colocar de forma fotorrealista los muebles de input_image_1, input_image_2 y input_image_3 en la habitación base de input_image_0 (por ejemplo: "using input_image_0 as base room layout, place the sofa from input_image_1 against the wall, place the table from input_image_2 in front of the sofa..."). 
+   Debes asociar de forma directa cada producto a su índice de imagen física:
    - input_image_0: Es el cuarto de fondo (el cual puede ser un cuarto vacío original o un render decorado en un turno anterior).
    - input_image_1: Es el primer producto recomendado/seleccionado del catálogo.
    - input_image_2: Es el segundo producto recomendado/seleccionado del catálogo (si existe).
    - input_image_3: Es el tercer producto recomendado/seleccionado del catálogo (si existe).
    
-   En el prompt en inglés, describe detalladamente cómo colocar de forma fotorrealista los muebles de input_image_1, input_image_2 y input_image_3 en la habitación base de input_image_0 (por ejemplo: "using input_image_0 as base room layout, place the sofa from input_image_1 against the wall, place the table from input_image_2 in front of the sofa..."). Asegúrate de indicar que los muebles de input_image_1, input_image_2 e input_image_3 deben integrarse perfectamente en perspectiva, iluminación, materiales y sombras con la habitación de input_image_0.
+   Asegúrate de indicar que los muebles de input_image_1, input_image_2 e input_image_3 deben integrarse perfectamente en perspectiva, iluminación, materiales y sombras con la habitación de input_image_0.
    También describe de forma genérica en texto cualquier elemento adicional que el usuario haya pedido y que NO esté en el catálogo (ej. cortinas, papel tapiz, plantas decorativas, piso).
 
 Genera una respuesta en formato JSON estrictamente válido, sin markdown ni comillas externas adicionales (solo el JSON plano), con la siguiente estructura:
@@ -309,7 +398,7 @@ Genera una respuesta en formato JSON estrictamente válido, sin markdown ni comi
 }`;
 
       // Llamada a Gemini con encadenamiento de fallbacks
-      let aiResponseJson: any = null;
+      let aiResponseJson = null;
       const modelsToTry = [
         "gemini-2.5-flash",
         "gemini-3.5-flash",
@@ -339,7 +428,8 @@ Genera una respuesta en formato JSON estrictamente válido, sin markdown ni comi
                           mimeType: 'image/jpeg',
                           data: base64Data
                         }
-                      }
+                      },
+                      ...productImagesData
                     ]
                   }
                 ],
@@ -357,7 +447,7 @@ Genera una respuesta en formato JSON estrictamente válido, sin markdown ni comi
 
           const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
           if (text) {
-            const cleanText = text.replace(/```json/g, "").replace(/```/g, "").trim();
+            const cleanText = text.replace(/\`\`\`json/g, "").replace(/\`\`\`/g, "").trim();
             aiResponseJson = JSON.parse(cleanText);
             console.log(`¡Gemini curó los productos con éxito usando ${modelName}!`);
             geminiSuccess = true;
@@ -372,42 +462,20 @@ Genera una respuesta en formato JSON estrictamente válido, sin markdown ni comi
       }
 
       if (!geminiSuccess) {
-        console.error("Todos los modelos de curación fallaron. Usando recomendación por defecto.");
-        const fallbackSelected = selectedProductsManual.length > 0 
-          ? selectedProductsManual 
-          : (activeCatalog.length > 0 ? [activeCatalog[0]] : []);
-        
+        console.error("Todos los modelos de curación fallaron. Último error:", lastGeminiError);
         let fallbackPrompt = `A beautifully designed ${spaceType} in ${style} style, matching color palette ${colors} with ${lighting}. Using input_image_0 as base room layout, `;
-        fallbackSelected.forEach((prod, index) => {
+        finalProductsToRender.forEach((prod, index) => {
           fallbackPrompt += `place the '${prod.name}' from input_image_${index + 1} against the wall or in a designated area matching the room's perspective and lighting. `;
         });
-        fallbackPrompt += `Ensure all added furniture (${fallbackSelected.map((_, i) => `input_image_${i + 1}`).join(', ')}) integrates perfectly with shadows, textures and perspective into input_image_0.`;
+        fallbackPrompt += `Ensure all added furniture (${finalProductsToRender.map((_, i) => `input_image_${i + 1}`).join(', ')}) integrates perfectly with shadows, textures and perspective into input_image_0.`;
 
         aiResponseJson = {
           current_issues: "Se utiliza el diseño sugerido basado en tus preferencias debido a alta demanda en los servidores de Gemini. Tus productos seleccionados siguen estando vinculados como referencias físicas.",
-          selected_products: fallbackSelected.map(p => ({ id: p.id, name: p.name, justification: "Mueble seleccionado para renovar el espacio." })),
+          selected_products: finalProductsToRender.map(p => ({ id: p.id, name: p.name, justification: "Mueble seleccionado para renovar el espacio." })),
           ai_prompt_for_image: fallbackPrompt
         };
       }
 
-      // D. CONSOLIDACIÓN DE PRODUCTOS A GENERAR
-      const selectedList: Product[] = [];
-      for (const item of aiResponseJson.selected_products || []) {
-        const match = activeCatalog.find(p => p.id === item.id || p.name.toLowerCase().includes(item.name.toLowerCase()));
-        if (match && !selectedList.some(s => s.id === match.id)) {
-          selectedList.push(match);
-        }
-      }
-
-      // Si por alguna razón Gemini no devolvió los seleccionados del usuario, los inyectamos a la fuerza
-      for (const p of selectedProductsManual) {
-        if (!selectedList.some(s => s.id === p.id)) {
-          selectedList.push(p);
-        }
-      }
-
-      // Limitamos a máximo 3 productos para no exceder las referencias de Cloudflare
-      const finalProductsToRender = selectedList.slice(0, 3);
       const imagePrompt = aiResponseJson.ai_prompt_for_image || `A modern ${style} ${spaceType}, matching furniture, 8k resolution`;
 
       console.log("\n========================================================");
@@ -417,41 +485,39 @@ Genera una respuesta en formato JSON estrictamente válido, sin markdown ni comi
       console.log(finalProductsToRender.map(p => p.name).join(", ") || "Ninguno");
       console.log("========================================================\n");
 
-      // E. CONSTRUCCIÓN DE FORM-DATA PARA CLOUDFLARE MULTI-REFERENCIA
+      // F. CONSTRUCCIÓN DE FORM-DATA PARA CLOUDFLARE MULTI-REFERENCIA
       const formData = new FormData();
       formData.append("prompt", imagePrompt);
-
-      // input_image_0 (Cuarto actual)
       formData.append("input_image_0", roomBlob, "room.jpg");
 
       // input_image_1, input_image_2, input_image_3 (Productos)
       for (let i = 0; i < finalProductsToRender.length; i++) {
         const prod = finalProductsToRender[i];
         try {
-          console.log(`Descargando imagen del producto ${prod.name} desde: ${prod.image}`);
-          const imgResponse = await fetch(prod.image);
-          if (imgResponse.ok) {
-            const imgBuffer = await imgResponse.arrayBuffer();
+          const imgBuffer = await getFileBuffer(prod.image, bucket);
+          if (imgBuffer) {
             const imgBlob = new Blob([imgBuffer], { type: "image/jpeg" });
             formData.append(`input_image_${i + 1}`, imgBlob, `prod_${prod.id}.jpg`);
-          } else {
-            console.warn(`Fallo de descarga de imagen para el producto ${prod.id}, HTTP status: ${imgResponse.status}`);
+            console.log(`Adjuntada imagen de producto ${prod.name} (input_image_${i + 1}) al FormData de Cloudflare.`);
           }
         } catch (e: any) {
-          console.error(`Error al descargar imagen del producto ${prod.id}:`, e);
+          console.error(`Error al adjuntar imagen de producto ${prod.id} a Cloudflare:`, e);
         }
       }
 
-      // F. INFERENCIA EN CLOUDFLARE WORKERS AI
+      // G. INFERENCIA EN CLOUDFLARE WORKERS AI (MULTIPLE REFERENCE)
       let generatedImage = "";
-      const mode = qualityMode || "speed";
-      const modelName = mode === "quality" 
-        ? "@cf/black-forest-labs/flux-2-dev" 
-        : "@cf/black-forest-labs/flux-2-klein-9b";
+      const mode = qualityMode || "quality";
+      let modelName = "@cf/black-forest-labs/flux-2-dev";
+      if (mode === "sketch") {
+        modelName = "@cf/black-forest-labs/flux-2-klein-4b";
+      } else if (mode === "speed") {
+        modelName = "@cf/black-forest-labs/flux-2-klein-9b";
+      }
 
       if (cfAccountId && cfApiToken) {
         try {
-          console.log(`Llamando a Cloudflare Workers AI (${modelName}) con multipart/form-data...`);
+          console.log(`Llamando a Cloudflare Workers AI (${modelName}) con FormData (multi-reference)...`);
           const cfResponse = await fetch(
             `https://api.cloudflare.com/client/v4/accounts/${cfAccountId}/ai/run/${modelName}`,
             {
@@ -466,7 +532,7 @@ Genera una respuesta en formato JSON estrictamente válido, sin markdown ni comi
           if (cfResponse.ok) {
             const contentType = cfResponse.headers.get("content-type") || "";
             if (contentType.includes("application/json")) {
-              const jsonResult = await cfResponse.json() as any;
+              const jsonResult = await cfResponse.json();
               const base64Image = jsonResult.result?.image;
               if (base64Image) {
                 generatedImage = `data:image/jpeg;base64,${base64Image}`;
@@ -503,7 +569,7 @@ Genera una respuesta en formato JSON estrictamente válido, sin markdown ni comi
         }
       }
 
-      // G. FALLBACK A HUGGING FACE (FLUX.1 SCHNELL TEXT-TO-IMAGE) SI FALLA CLOUDFLARE
+      // H. FALLBACK A HUGGING FACE (FLUX.1 SCHNELL TEXT-TO-IMAGE) SI FALLA CLOUDFLARE
       if (!generatedImage && hfToken) {
         try {
           console.log("Hugging Face Inference API (Fallback FLUX.1 Text-to-Image)...");
@@ -533,13 +599,13 @@ Genera una respuesta en formato JSON estrictamente válido, sin markdown ni comi
         }
       }
 
-      // H. FALLBACK FINAL: IMAGEN POR DEFECTO
+      // I. FALLBACK FINAL: IMAGEN POR DEFECTO
       if (!generatedImage) {
         console.log("Todos los generadores fallaron. Usando imagen por defecto.");
         generatedImage = "https://images.unsplash.com/photo-1618221195710-dd6b41faaea6?auto=format&fit=crop&q=80&w=1200";
       }
 
-      // I. DEVOLVER DETALLES COMPLETOS DE LOS PRODUCTOS UTILIZADOS
+      // J. DEVOLVER DETALLES COMPLETOS DE LOS PRODUCTOS UTILIZADOS
       const selectedProductsDetails = finalProductsToRender.map((prod) => {
         const item = aiResponseJson.selected_products?.find((item: any) => 
           item.id === prod.id || item.name.toLowerCase().includes(prod.name.toLowerCase())
@@ -551,6 +617,27 @@ Genera una respuesta en formato JSON estrictamente válido, sin markdown ni comi
           details: prod
         };
       });
+
+      // Si la imagen generada es un base64 data URL (de Hugging Face o Cloudflare), la guardamos en R2 para que el frontend use una URL corta en LocalStorage
+      if (generatedImage.startsWith('data:')) {
+        try {
+          const mimeType = generatedImage.match(/^data:([^;]+);/)?.[1] || 'image/png';
+          const ext = mimeType.split('/')[1] || 'png';
+          const base64 = generatedImage.replace(/^data:image\/\w+;base64,/, "");
+          const buffer = Buffer.from(base64, 'base64');
+          
+          const key = `generated-${Date.now()}.${ext}`;
+          console.log(`[R2 Save] Subiendo imagen generada por IA a R2 con clave: ${key}`);
+          await bucket.put(key, buffer, {
+            httpMetadata: { contentType: mimeType }
+          });
+          
+          // Reemplazar generatedImage con la URL de nuestro servidor de archivos
+          generatedImage = `/api/files/${key}`;
+        } catch (e: any) {
+          console.error("Error al persistir la imagen generada en R2:", e.message || e);
+        }
+      }
 
       return {
         current_issues: aiResponseJson.current_issues || "Diseño sugerido.",
