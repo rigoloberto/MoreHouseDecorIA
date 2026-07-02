@@ -373,16 +373,19 @@ Tu tarea es:
 2. Escribir una justificación convincente de cómo y dónde se integra cada producto en el espacio.
 3. Generar un prompt en inglés ultra-descriptivo para el generador de imágenes FLUX.2.
    
-   IMPORTANTE PARA EL PROMPT DE FLUX.2:
-   En tu prompt final en inglés, debes describir detalladamente cómo colocar de forma fotorrealista los muebles de input_image_1, input_image_2 y input_image_3 en la habitación base de input_image_0 (por ejemplo: "using input_image_0 as base room layout, place the sofa from input_image_1 against the wall, place the table from input_image_2 in front of the sofa..."). 
-   Debes asociar de forma directa cada producto a su índice de imagen física:
-   - input_image_0: Es el cuarto de fondo (el cual puede ser un cuarto vacío original o un render decorado en un turno anterior).
-   - input_image_1: Es el primer producto recomendado/seleccionado del catálogo.
-   - input_image_2: Es el segundo producto recomendado/seleccionado del catálogo (si existe).
-   - input_image_3: Es el tercer producto recomendado/seleccionado del catálogo (si existe).
+   IMPORTANTE PARA EL PROMPT DE FLUX.2 (DISEÑO SECUENCIAL E INCREMENTAL):
+   - input_image_0 es la habitación base. Esta habitación NO es necesariamente un cuarto vacío; en la mayoría de los casos, ya contiene muebles colocados en turnos de diseño anteriores.
+   - La tarea de diseño es INCREMENTAL y ACUMULATIVA: debes conservar y mantener todos los muebles, decoraciones y accesorios que ya están presentes y visibles en input_image_0 (como sofás, mesas, alfombras, lámparas, plantas o peluches que ya se aprecian en ella), a menos que:
+     a) El usuario pida explícitamente removerlos en sus instrucciones especiales ("${customText}").
+     b) Un nuevo mueble del catálogo reemplace directamente a uno existente del mismo tipo (ej. cambiar un sofá existente por un nuevo sofá de input_image_1).
+   - En tu prompt final en inglés, debes describir detalladamente cómo colocar de forma fotorrealista los nuevos muebles de input_image_1, input_image_2 y input_image_3 en los espacios libres o vacíos de input_image_0 (por ejemplo: "using input_image_0 as base room layout, keep the existing sofas, coffee tables and plush toy from input_image_0, and add the dining table from input_image_1 in the dining area...").
+   - Asocia de forma directa cada nuevo producto a su índice de imagen física:
+     - input_image_1: Es el primer producto recomendado/seleccionado del catálogo.
+     - input_image_2: Es el segundo producto recomendado/seleccionado del catálogo (si existe).
+     - input_image_3: Es el tercer producto recomendado/seleccionado del catálogo (si existe).
    
-   Asegúrate de indicar que los muebles de input_image_1, input_image_2 e input_image_3 deben integrarse perfectamente en perspectiva, iluminación, materiales y sombras con la habitación de input_image_0.
-   También describe de forma genérica en texto cualquier elemento adicional que el usuario haya pedido y que NO esté en el catálogo (ej. cortinas, papel tapiz, plantas decorativas, piso).
+   Asegúrate de indicar que los nuevos muebles de input_image_1, input_image_2 e input_image_3 deben integrarse perfectamente en perspectiva, iluminación, materiales y sombras con la habitación de input_image_0.
+   También describe de forma genérica en texto cualquier elemento adicional que el usuario haya pedido y que NO esté en el catálogo (ej. cortinas, plantas, pintura, piso).
 
 Genera una respuesta en formato JSON estrictamente válido, sin markdown ni comillas externas adicionales (solo el JSON plano), con la siguiente estructura:
 {

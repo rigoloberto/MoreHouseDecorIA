@@ -7,6 +7,23 @@ import confetti from 'canvas-confetti';
 // ============================================================================
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000';
 const activeTab = ref<'designer' | 'catalog' | 'admin'>('designer');
+const isDarkMode = ref<boolean>(true);
+
+const updateThemeClass = () => {
+  if (typeof document !== 'undefined') {
+    if (isDarkMode.value) {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+  }
+};
+
+const toggleTheme = () => {
+  isDarkMode.value = !isDarkMode.value;
+  updateThemeClass();
+  saveToLocalStorage();
+};
 
 // Catalog state
 const products = ref<any[]>([]);
@@ -141,6 +158,7 @@ const saveToLocalStorage = () => {
   localStorage.setItem('mh_design_history', JSON.stringify(designHistory.value));
   localStorage.setItem('mh_active_design_id', activeDesignId.value);
   localStorage.setItem('mh_uploaded_image', uploadedImage.value || '');
+  localStorage.setItem('mh_is_dark_mode', isDarkMode.value.toString());
 };
 
 const loadFromLocalStorage = () => {
@@ -148,6 +166,12 @@ const loadFromLocalStorage = () => {
     const history = localStorage.getItem('mh_design_history');
     const activeId = localStorage.getItem('mh_active_design_id');
     const uploadedImg = localStorage.getItem('mh_uploaded_image');
+    const savedDark = localStorage.getItem('mh_is_dark_mode');
+    
+    if (savedDark !== null) {
+      isDarkMode.value = savedDark === 'true';
+    }
+    updateThemeClass();
     
     if (history) {
       const parsed = JSON.parse(history);
@@ -435,13 +459,33 @@ const clearUploadedImage = () => {
   }
 };
 
-const downloadImage = (imgUrl: string, filename: string) => {
-  const link = document.createElement('a');
-  link.href = imgUrl;
-  link.download = filename;
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
+const downloadImage = async (imgUrl: string, filename: string) => {
+  try {
+    const res = await fetch(imgUrl);
+    const blob = await res.blob();
+    const localUrl = URL.createObjectURL(blob);
+    
+    const link = document.createElement('a');
+    link.href = localUrl;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    
+    // Libera la URL del objeto después de un breve delay
+    setTimeout(() => {
+      URL.revokeObjectURL(localUrl);
+    }, 150);
+  } catch (err) {
+    console.error("Fallo al descargar la imagen mediante Blob, usando fallback directo:", err);
+    const link = document.createElement('a');
+    link.href = imgUrl;
+    link.target = '_blank';
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  }
 };
 
 // Admin CRUD operations
@@ -735,8 +779,10 @@ export function useDesigner() {
     galleryActiveDesignId,
     galleryActiveIndex,
     galleryActiveDesign,
+    isDarkMode,
     
     // Core methods
+    toggleTheme,
     fetchCatalog,
     saveToLocalStorage,
     loadFromLocalStorage,

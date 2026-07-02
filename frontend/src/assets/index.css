@@ -4,60 +4,164 @@
 
 @layer base {
   body {
-    @apply bg-brand-dark text-slate-100 selection:bg-brand-500 selection:text-white;
+    @apply bg-slate-50 text-slate-800 dark:bg-[#090d16] dark:text-slate-100 antialiased selection:bg-indigo-500/40 selection:text-white;
   }
-  
-  /* Custom scrollbar for modern looks */
+
+  /* Transition smooth themes */
+  body, .glass-card, .glass-nav, .glass-input, .glass-btn-secondary, .segment-control, .segment-option, .nav-tab, .nav-tab-active {
+    transition: background-color 0.4s cubic-bezier(0.16, 1, 0.3, 1), 
+                border-color 0.4s cubic-bezier(0.16, 1, 0.3, 1), 
+                color 0.4s cubic-bezier(0.16, 1, 0.3, 1), 
+                box-shadow 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
   ::-webkit-scrollbar {
     width: 6px;
     height: 6px;
   }
   ::-webkit-scrollbar-track {
-    background: rgba(11, 15, 25, 0.5);
+    background: rgba(226, 232, 240, 0.5);
+    @apply dark:bg-slate-950/60;
   }
   ::-webkit-scrollbar-thumb {
-    background: rgba(99, 102, 241, 0.3);
+    background: rgba(99, 102, 241, 0.2);
     border-radius: 9999px;
+    @apply dark:bg-indigo-500/30;
   }
   ::-webkit-scrollbar-thumb:hover {
-    background: rgba(99, 102, 241, 0.6);
+    background: rgba(99, 102, 241, 0.4);
+    @apply dark:bg-indigo-400/50;
   }
 }
 
 @layer components {
-  /* Glassmorphism Styles */
+  /* ── Glass surfaces ── */
   .glass-card {
-    background: rgba(22, 30, 49, 0.45);
-    backdrop-filter: blur(16px);
-    -webkit-backdrop-filter: blur(16px);
-    border: 1px solid rgba(255, 255, 255, 0.07);
-    box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.2);
+    @apply bg-white/90 border border-slate-200/60 shadow-glass-light backdrop-blur-md
+           dark:bg-slate-900/85 dark:border-white/10 dark:shadow-glass-dark;
   }
 
   .glass-card-hover {
-    @apply transition-all duration-300 hover:shadow-lg hover:shadow-brand-500/10 hover:border-brand-500/30;
+    @apply transition-all duration-500 ease-out
+           hover:border-indigo-500/20 hover:shadow-lg hover:shadow-indigo-500/5
+           dark:hover:border-indigo-500/25 dark:hover:shadow-glow-indigo;
   }
 
   .glass-nav {
-    background: rgba(11, 15, 25, 0.65);
-    backdrop-filter: blur(20px);
-    -webkit-backdrop-filter: blur(20px);
-    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    @apply bg-white/90 border border-slate-200/50 shadow-[0_8px_32px_rgba(0,0,0,0.03)] backdrop-blur-xl rounded-full
+           dark:bg-slate-900/80 dark:border-white/10 dark:shadow-[0_8px_32px_rgba(0,0,0,0.35)];
   }
 
+  /* ── Form controls ── */
   .glass-input {
-    background: rgba(11, 15, 25, 0.4);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    @apply focus:border-brand-500/50 focus:ring-1 focus:ring-brand-500/50 focus:outline-none transition-all duration-200 rounded-xl px-4 py-3 text-slate-100;
+    @apply bg-slate-100/80 border border-slate-200/80 rounded-xl px-4 py-3
+           text-slate-800 placeholder:text-slate-400
+           transition-all duration-300 ease-out
+           focus:outline-none focus:border-indigo-400/50 focus:ring-1 focus:ring-indigo-500/20
+           focus:shadow-[0_0_20px_rgba(99,102,241,0.06)]
+           dark:bg-slate-950/50 dark:border-white/10 dark:text-slate-100 dark:placeholder:text-slate-500
+           dark:focus:border-indigo-400/50 dark:focus:ring-1 dark:focus:ring-indigo-500/30
+           dark:focus:shadow-[0_0_20px_rgba(99,102,241,0.12)];
   }
 
+  select.glass-input option {
+    @apply bg-white text-slate-800 dark:bg-slate-900 dark:text-slate-100;
+  }
+
+  /* ── Buttons ── */
   .glass-btn-primary {
-    @apply bg-brand-500 hover:bg-brand-600 text-white font-medium px-6 py-3 rounded-xl transition-all duration-300 shadow-lg shadow-brand-500/20 hover:shadow-brand-500/40 hover:-translate-y-0.5 active:translate-y-0 disabled:opacity-50 disabled:pointer-events-none;
+    @apply relative overflow-hidden
+           bg-gradient-to-r from-indigo-600 via-indigo-600 to-violet-600
+           hover:from-indigo-500 hover:via-indigo-600 hover:to-violet-500
+           text-white font-semibold px-6 py-3 rounded-xl
+           shadow-lg shadow-indigo-600/10 hover:shadow-indigo-500/20
+           dark:shadow-indigo-500/20 dark:hover:shadow-glow-indigo-lg
+           transition-all duration-300 ease-out
+           hover:scale-[1.02] active:scale-[0.98]
+           disabled:opacity-40 disabled:pointer-events-none disabled:scale-100;
   }
 
   .glass-btn-secondary {
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    @apply hover:bg-white/10 text-slate-200 font-medium px-6 py-3 rounded-xl transition-all duration-200 active:translate-y-0 disabled:opacity-50;
+    @apply bg-slate-100/80 border border-slate-200/80 hover:bg-slate-200/80
+           hover:border-slate-300 text-slate-700 hover:text-slate-900
+           font-medium px-6 py-3 rounded-xl
+           transition-all duration-300 ease-out
+           hover:scale-[1.02] active:scale-[0.98]
+           disabled:opacity-40 disabled:pointer-events-none
+           dark:bg-white/[0.04] dark:border-white/10 dark:hover:bg-white/[0.08]
+           dark:hover:border-white/15 dark:text-slate-300 dark:hover:text-slate-100;
+  }
+
+  /* ── Segment control (priority picker) ── */
+  .segment-control {
+    @apply flex p-1 gap-1 rounded-2xl backdrop-blur-sm
+           bg-slate-100 border border-slate-200/60
+           dark:bg-slate-950/70 dark:border-white/10;
+  }
+
+  .segment-option {
+    @apply flex-1 py-2.5 px-2 rounded-xl text-[10px] font-bold tracking-wide
+           text-slate-400 border border-transparent
+           transition-all duration-300 ease-out
+           hover:text-slate-700 cursor-pointer select-none
+           dark:text-slate-500 dark:hover:text-slate-300;
+  }
+
+  .segment-option-active {
+    @apply bg-white text-indigo-600 border border-slate-200 shadow-sm
+           dark:bg-slate-900/80 dark:bg-gradient-to-br dark:from-indigo-500/20 dark:to-violet-600/15
+           dark:text-indigo-200 dark:border-indigo-400/30
+           dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.06),0_0_16px_rgba(99,102,241,0.15)];
+  }
+
+  /* ── Nav tabs ── */
+  .nav-tab {
+    @apply flex items-center gap-2 px-5 py-2.5 rounded-full text-sm font-bold
+           text-slate-500 transition-all duration-300 ease-out
+           hover:text-slate-800 hover:bg-slate-200/50
+           dark:text-slate-400 dark:hover:text-slate-200 dark:hover:bg-white/[0.04];
+  }
+
+  .nav-tab-active {
+    @apply flex items-center gap-2 px-5 py-2.5 rounded-full text-sm font-bold
+           bg-indigo-600 text-white shadow-md shadow-indigo-600/20 hover:scale-[1.02]
+           dark:bg-gradient-to-r dark:from-indigo-500/90 dark:to-violet-600/90 dark:shadow-indigo-500/25;
+  }
+
+  /* ── Scrollbar utility ── */
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(99, 102, 241, 0.2) transparent;
+  }
+
+  /* ── AI loading shimmer bar ── */
+  .ai-loading-bar {
+    @apply h-1 w-48 rounded-full overflow-hidden bg-slate-200 dark:bg-white/5;
+  }
+
+  .ai-loading-bar-inner {
+    @apply h-full w-full rounded-full;
+    background: linear-gradient(90deg, transparent, rgba(99, 102, 241, 0.6), rgba(139, 92, 246, 0.6), transparent);
+    background-size: 200% 100%;
+    animation: shimmer 2s infinite linear;
+  }
+
+  /* ── Stat icon badge ── */
+  .stat-icon-badge {
+    @apply p-3.5 rounded-2xl border border-slate-200/60
+           bg-gradient-to-br from-indigo-500/10 via-transparent to-violet-600/5
+           dark:border-white/10 dark:bg-gradient-to-br dark:from-indigo-500/15 dark:via-transparent dark:to-violet-600/10;
+  }
+
+  /* ── Invoice / quote styling ── */
+  .invoice-header-band {
+    @apply bg-slate-50 border-b border-slate-200
+           dark:bg-gradient-to-r dark:from-indigo-950/40 dark:via-slate-900/60 dark:to-violet-950/30
+           dark:border-b dark:border-white/10;
+  }
+
+  .invoice-accent-line {
+    @apply h-px w-full bg-gradient-to-r from-transparent via-slate-300 to-transparent
+           dark:via-indigo-500/40;
   }
 }
